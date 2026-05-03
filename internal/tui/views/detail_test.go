@@ -1,6 +1,7 @@
 package views
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -128,5 +129,96 @@ func TestDetailViewLayout(t *testing.T) {
 	narrow := d.View()
 	if !strings.Contains(narrow, "c1") {
 		t.Errorf("narrow view missing comment id:\n%s", narrow)
+	}
+}
+
+// stubPreImage implements PreImageSource for testing without spawning git.
+type stubPreImage struct{ files map[string][]byte }
+
+func (s *stubPreImage) Content(path string) ([]byte, error) {
+	if b, ok := s.files[path]; ok {
+		return b, nil
+	}
+	return nil, fmt.Errorf("stubPreImage: no entry for %q", path)
+}
+
+func TestDetailCodeContentLeftSide(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	// Working tree contains only the post-image.
+	postSrc := "package x\n\nfunc New() {}\n"
+	if err := os.WriteFile(filepath.Join(root, "x.go"), []byte(postSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-image is supplied via the stub — different content, so we can
+	// distinguish which source the renderer pulled from.
+	preSrc := "package x\n\nfunc Old() {}\n"
+	pi := &stubPreImage{files: map[string][]byte{"x.go": []byte(preSrc)}}
+
+	r := &model.Review{
+		BaseDir: root,
+		PR:      model.PRMeta{Repo: "o/r", Number: 1, HeadSHA: "h", BaseBranch: "main"},
+		Comments: []model.Comment{
+			{ID: "c1", Status: model.StatusPending, Severity: model.SeverityMinor,
+				Category: model.CategoryDesign, Path: "x.go", Line: 3,
+				Side: model.SideLeft, BodyFile: "c1.md", Body: "x"},
+		},
+	}
+	d := NewDetail(r, root, keys.DefaultKeyMap(), 0, DetailSettings{PreImage: pi})
+
+	out, err := d.codeContent(&r.Comments[0])
+	if err != nil {
+		t.Fatalf("codeContent: %v", err)
+	}
+	if !strings.Contains(out, "Old") {
+		t.Errorf("LEFT comment should render pre-image content; got:\n%s", out)
+	}
+	if strings.Contains(out, "New") {
+		t.Errorf("LEFT comment must not pull from working tree; got:\n%s", out)
+	}
+}
+
+func TestDetailCodeContentCrossSide(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	// Working tree (post-image): line 3 contains New().
+	postSrc := "package x\n\nfunc New() {}\n"
+	if err := os.WriteFile(filepath.Join(root, "x.go"), []byte(postSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-image: line 3 contains Old(); range starts here.
+	preSrc := "package x\n\nfunc Old() {}\n"
+	pi := &stubPreImage{files: map[string][]byte{"x.go": []byte(preSrc)}}
+
+	startLine := 3
+	startSide := model.SideLeft
+	r := &model.Review{
+		BaseDir: root,
+		PR:      model.PRMeta{Repo: "o/r", Number: 1, HeadSHA: "h", BaseBranch: "main"},
+		Comments: []model.Comment{
+			{ID: "c1", Status: model.StatusPending, Severity: model.SeverityMinor,
+				Category: model.CategoryDesign, Path: "x.go", Line: 3,
+				Side:      model.SideRight,
+				StartLine: &startLine,
+				StartSide: &startSide,
+				BodyFile:  "c1.md", Body: "x"},
+		},
+	}
+	d := NewDetail(r, root, keys.DefaultKeyMap(), 0, DetailSettings{PreImage: pi})
+
+	out, err := d.codeContent(&r.Comments[0])
+	if err != nil {
+		t.Fatalf("codeContent: %v", err)
+	}
+	// Both pre-image and post-image content must appear in the cross-side view.
+	if !strings.Contains(out, "Old") {
+		t.Errorf("cross-side view missing pre-image excerpt:\n%s", out)
+	}
+	if !strings.Contains(out, "New") {
+		t.Errorf("cross-side view missing post-image excerpt:\n%s", out)
+	}
+	// Separator labels should be present so the user can tell which is which.
+	if !strings.Contains(out, "変更前") || !strings.Contains(out, "変更後") {
+		t.Errorf("expected 変更前/変更後 separators in:\n%s", out)
 	}
 }

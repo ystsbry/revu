@@ -20,7 +20,7 @@ func TestLoadFixture(t *testing.T) {
 	if r.SchemaVersion != 1 {
 		t.Errorf("SchemaVersion = %d, want 1", r.SchemaVersion)
 	}
-	if r.PR.Repo != "ystsbry/some-app" || r.PR.Number != 1 {
+	if r.PR.Repo != "ystsbry/revu" || r.PR.Number != 1 {
 		t.Errorf("PR meta: %#v", r.PR)
 	}
 	if r.ReviewEvent != model.EventRequestChanges {
@@ -29,8 +29,8 @@ func TestLoadFixture(t *testing.T) {
 	if !strings.Contains(r.SummaryBody, "全体所感") {
 		t.Errorf("SummaryBody not loaded; first 80 chars: %q", trunc(r.SummaryBody, 80))
 	}
-	if len(r.Comments) != 4 {
-		t.Fatalf("len(Comments) = %d, want 4", len(r.Comments))
+	if len(r.Comments) != 6 {
+		t.Fatalf("len(Comments) = %d, want 6", len(r.Comments))
 	}
 	for i, c := range r.Comments {
 		if c.Body == "" {
@@ -41,8 +41,32 @@ func TestLoadFixture(t *testing.T) {
 		t.Errorf("BaseDir = %q, want abs path", r.BaseDir)
 	}
 
-	if got := r.Counts(); got[model.StatusPending] != 2 || got[model.StatusAccepted] != 1 || got[model.StatusRejected] != 1 {
+	if got := r.Counts(); got[model.StatusPending] != 4 || got[model.StatusAccepted] != 1 || got[model.StatusRejected] != 1 {
 		t.Errorf("Counts mismatch: %#v", got)
+	}
+
+	// c5 is a same-side RIGHT range comment.
+	c5 := r.FindComment("c5")
+	if c5 == nil {
+		t.Fatalf("c5 not found")
+	}
+	if c5.StartLine == nil || *c5.StartLine != 197 || c5.Line != 215 {
+		t.Errorf("c5 range = (start=%v, line=%d), want (197, 215)", c5.StartLine, c5.Line)
+	}
+	if c5.Side != model.SideRight || c5.StartSide != nil {
+		t.Errorf("c5 should be same-side RIGHT (no explicit start_side); got side=%q start_side=%v", c5.Side, c5.StartSide)
+	}
+
+	// c6 is a cross-side range: LEFT 130 -> RIGHT 142.
+	c6 := r.FindComment("c6")
+	if c6 == nil {
+		t.Fatalf("c6 not found")
+	}
+	if c6.StartLine == nil || *c6.StartLine != 130 || c6.Line != 142 {
+		t.Errorf("c6 range = (start=%v, line=%d), want (130, 142)", c6.StartLine, c6.Line)
+	}
+	if c6.StartSide == nil || *c6.StartSide != model.SideLeft || c6.Side != model.SideRight {
+		t.Errorf("c6 cross-side = (start_side=%v, side=%q), want (LEFT, RIGHT)", c6.StartSide, c6.Side)
 	}
 }
 

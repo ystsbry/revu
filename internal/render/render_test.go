@@ -147,6 +147,23 @@ func TestCodeRangeSingleEqualsCode(t *testing.T) {
 	}
 }
 
+func TestCodeBytesNoFilesystem(t *testing.T) {
+	t.Parallel()
+	// Content not backed by any file on disk; chroma should still highlight
+	// based on the .go hintPath.
+	content := []byte("package foo\n\nfunc Bar() {}\n")
+	out, err := CodeBytes(content, "synthetic.go", 3, 3, 0)
+	if err != nil {
+		t.Fatalf("CodeBytes: %v", err)
+	}
+	if !strings.Contains(out, "▶    3  ") {
+		t.Errorf("expected line 3 marker:\n%s", out)
+	}
+	if !strings.Contains(out, "Bar") {
+		t.Errorf("expected source content in output:\n%s", out)
+	}
+}
+
 func TestMarkdownBasic(t *testing.T) {
 	t.Parallel()
 	out, err := Markdown("# Hello\n\nworld\n", 40)

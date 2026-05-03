@@ -28,6 +28,17 @@ func Code(path string, targetLine, ctx int) (string, error) {
 //
 // If startLine > endLine the inputs are swapped. Both bounds must be >= 1.
 func CodeRange(path string, startLine, endLine, ctx int) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return CodeBytes(raw, path, startLine, endLine, ctx)
+}
+
+// CodeBytes is the in-memory variant of CodeRange. `hintPath` is used only
+// for chroma's filename-based lexer detection (the file does not have to
+// exist on disk). Useful for rendering content fetched from `git show`.
+func CodeBytes(content []byte, hintPath string, startLine, endLine, ctx int) (string, error) {
 	if startLine < 1 {
 		return "", fmt.Errorf("startLine must be >= 1, got %d", startLine)
 	}
@@ -41,14 +52,9 @@ func CodeRange(path string, startLine, endLine, ctx int) (string, error) {
 		ctx = 0
 	}
 
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-
-	lexer := lexers.Match(path)
+	lexer := lexers.Match(hintPath)
 	if lexer == nil {
-		lexer = lexers.Analyse(string(raw))
+		lexer = lexers.Analyse(string(content))
 	}
 	if lexer == nil {
 		lexer = lexers.Fallback
@@ -62,7 +68,7 @@ func CodeRange(path string, startLine, endLine, ctx int) (string, error) {
 		formatter = formatters.Fallback
 	}
 
-	it, err := lexer.Tokenise(nil, string(raw))
+	it, err := lexer.Tokenise(nil, string(content))
 	if err != nil {
 		return "", err
 	}

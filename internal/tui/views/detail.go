@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -27,6 +28,10 @@ const DefaultCodeContextLines = 5
 type DetailSettings struct {
 	CodeContextLines    int
 	HorizontalThreshold int
+	// PreImage fetches the base-commit version of files for LEFT-side or
+	// cross-side comments. Optional; when nil, NewDetail constructs a
+	// git-backed source from the review's HeadSHA and BaseBranch.
+	PreImage PreImageSource
 }
 
 // Detail is a tea.Model rendering one comment: code excerpt + markdown body.
@@ -39,6 +44,7 @@ type Detail struct {
 	index               int
 	codeContextLines    int
 	horizontalThreshold int
+	preImage            PreImageSource
 
 	width  int
 	height int
@@ -59,6 +65,10 @@ func NewDetail(r *model.Review, repoRoot string, km keys.KeyMap, index int, s De
 	if s.HorizontalThreshold <= 0 {
 		s.HorizontalThreshold = DefaultHorizontalThreshold
 	}
+	pi := s.PreImage
+	if pi == nil {
+		pi = NewGitPreImage(repoRoot, r.PR.HeadSHA, r.PR.BaseBranch)
+	}
 	return &Detail{
 		keys:                km,
 		review:              r,
@@ -66,6 +76,7 @@ func NewDetail(r *model.Review, repoRoot string, km keys.KeyMap, index int, s De
 		index:               clampIndex(index, len(r.Comments)),
 		codeContextLines:    s.CodeContextLines,
 		horizontalThreshold: s.HorizontalThreshold,
+		preImage:            pi,
 	}
 }
 
@@ -198,22 +209,77 @@ func (d *Detail) codeContent(c *model.Comment) (string, error) {
 	if d.repoRoot == "" {
 		return "", errors.New("repo root not configured")
 	}
-	abs := filepath.Join(d.repoRoot, c.Path)
-	startLine, endLine := c.Line, c.Line
-	// A range only makes sense in the local working tree when both ends
-	// reference the post-image (RIGHT side). LEFT or cross-side ranges
-	// would point into the pre-image and don't align with current file
-	// line numbers, so we fall back to highlighting the end line.
-	if c.StartLine != nil && c.Side == model.SideRight {
-		startSide := c.Side
-		if c.StartSide != nil {
-			startSide = *c.StartSide
-		}
-		if startSide == model.SideRight {
-			startLine = *c.StartLine
-		}
+	startSide := c.Side
+	if c.StartSide != nil {
+		startSide = *c.StartSide
 	}
-	return render.CodeRange(abs, startLine, endLine, d.codeContextLines)
+	startLine, endLine := c.Line, c.Line
+	if c.StartLine != nil {
+		startLine = *c.StartLine
+	}
+
+	switch {
+	case startSide == model.SideRight && c.Side == model.SideRight:
+		// Common case: comment refers entirely to the post-image, which
+		// matches the working tree.
+		return render.CodeRange(filepath.Join(d.repoRoot, c.Path),
+			startLine, endLine, d.codeContextLines)
+
+	case startSide == c.Side:
+		// Same-side LEFT comment (single line or range). Render pre-image.
+		raw, err := d.preImageContent(c.Path)
+		if err != nil {
+			return "", err
+		}
+		return render.CodeBytes(raw, c.Path, startLine, endLine, d.codeContextLines)
+
+	default:
+		// Cross-side range. Show two excerpts stacked: the start (typically
+		// LEFT) from the pre-image, and the end (typically RIGHT) from the
+		// working tree. Each excerpt highlights its own anchor line so the
+		// reader can locate where the range begins and ends.
+		return d.crossSideExcerpt(c, startSide, startLine, endLine)
+	}
+}
+
+func (d *Detail) crossSideExcerpt(c *model.Comment, startSide model.Side, startLine, endLine int) (string, error) {
+	startBlock, startErr := d.sideExcerpt(c.Path, startSide, startLine)
+	endBlock, endErr := d.sideExcerpt(c.Path, c.Side, endLine)
+	if startErr != nil && endErr != nil {
+		return "", startErr
+	}
+
+	var b strings.Builder
+	if startErr == nil {
+		fmt.Fprintf(&b, "--- %s (変更前) ---\n", startSide)
+		b.WriteString(startBlock)
+	}
+	if endErr == nil {
+		if startErr == nil {
+			b.WriteByte('\n')
+		}
+		fmt.Fprintf(&b, "--- %s (変更後) ---\n", c.Side)
+		b.WriteString(endBlock)
+	}
+	return b.String(), nil
+}
+
+func (d *Detail) sideExcerpt(path string, side model.Side, line int) (string, error) {
+	if side == model.SideRight {
+		return render.CodeRange(filepath.Join(d.repoRoot, path), line, line, d.codeContextLines)
+	}
+	raw, err := d.preImageContent(path)
+	if err != nil {
+		return "", err
+	}
+	return render.CodeBytes(raw, path, line, line, d.codeContextLines)
+}
+
+func (d *Detail) preImageContent(path string) ([]byte, error) {
+	if d.preImage == nil {
+		return nil, errors.New("pre-image source not configured")
+	}
+	return d.preImage.Content(path)
 }
 
 func (d *Detail) current() *model.Comment {

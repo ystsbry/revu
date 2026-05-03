@@ -1,7 +1,7 @@
 schema_version: 1
 
 pr:
-  repo: ystsbry/some-app
+  repo: ystsbry/revu
   number: 1
   head_sha: abc1234
   base_branch: main
@@ -20,34 +20,58 @@ comments:
     status: pending
     severity: major
     category: design
-    path: src/features/order/application.py
-    line: 42
+    path: internal/render/code.go
+    line: 100
     side: RIGHT
-    body_file: comments/c1-application-42.md
+    body_file: comments/c1-render-code.md
 
   - id: c2
     status: pending
     severity: nit
     category: style
-    path: src/features/order/domain.py
-    line: 15
+    path: internal/store/loader.go
+    line: 130
     side: RIGHT
-    body_file: comments/c2-domain-15.md
+    body_file: comments/c2-store-loader.md
 
   - id: c3
     status: accepted
     severity: minor
     category: perf
-    path: src/features/order/repository.py
-    line: 88
+    path: internal/tui/views/detail.go
+    line: 220
     side: RIGHT
-    body_file: comments/c3-repository-88.md
+    body_file: comments/c3-tui-detail.md
 
   - id: c4
     status: rejected
     severity: major
     category: bug
-    path: src/features/order/handler.py
-    line: 23
+    path: internal/github/payload.go
+    line: 60
     side: RIGHT
-    body_file: comments/c4-handler-23.md
+    body_file: comments/c4-github-payload.md
+
+  # 複数行範囲 (同一 side RIGHT)。codeContent の switch 全体への指摘。
+  - id: c5
+    status: pending
+    severity: minor
+    category: design
+    path: internal/tui/views/detail.go
+    start_line: 197
+    line: 215
+    side: RIGHT
+    body_file: comments/c5-tui-detail-range.md
+
+  # クロスサイド範囲 (LEFT 旧コード → RIGHT 新コード)。
+  # 旧バリデーション 1 行を、新しい複数行ブロックに差し替えた変更へのレビュー。
+  - id: c6
+    status: pending
+    severity: nit
+    category: style
+    path: internal/store/loader.go
+    start_line: 130
+    start_side: LEFT
+    line: 142
+    side: RIGHT
+    body_file: comments/c6-store-loader-crossside.md
