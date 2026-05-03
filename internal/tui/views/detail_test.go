@@ -41,7 +41,7 @@ func A() {
 func TestDetailNavigateNext(t *testing.T) {
 	t.Parallel()
 	r, root := detailFixture(t)
-	d := NewDetail(r, root, keys.DefaultKeyMap(), 0)
+	d := NewDetail(r, root, keys.DefaultKeyMap(), 0, DetailSettings{})
 
 	if d.Index() != 0 {
 		t.Fatalf("initial index = %d", d.Index())
@@ -64,7 +64,7 @@ func TestDetailNavigateNext(t *testing.T) {
 func TestDetailAcceptMutates(t *testing.T) {
 	t.Parallel()
 	r, root := detailFixture(t)
-	d := NewDetail(r, root, keys.DefaultKeyMap(), 0)
+	d := NewDetail(r, root, keys.DefaultKeyMap(), 0, DetailSettings{})
 
 	_, cmd := d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	if r.Comments[0].Status != model.StatusAccepted {
@@ -81,7 +81,7 @@ func TestDetailAcceptMutates(t *testing.T) {
 func TestDetailGoToList(t *testing.T) {
 	t.Parallel()
 	r, root := detailFixture(t)
-	d := NewDetail(r, root, keys.DefaultKeyMap(), 0)
+	d := NewDetail(r, root, keys.DefaultKeyMap(), 0, DetailSettings{})
 
 	_, cmd := d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	if cmd == nil {
@@ -95,7 +95,7 @@ func TestDetailGoToList(t *testing.T) {
 func TestDetailEditEmitsAbsPath(t *testing.T) {
 	t.Parallel()
 	r, root := detailFixture(t)
-	d := NewDetail(r, root, keys.DefaultKeyMap(), 0)
+	d := NewDetail(r, root, keys.DefaultKeyMap(), 0, DetailSettings{})
 
 	_, cmd := d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
 	if cmd == nil {
@@ -116,7 +116,7 @@ func TestDetailEditEmitsAbsPath(t *testing.T) {
 func TestDetailViewLayout(t *testing.T) {
 	t.Parallel()
 	r, root := detailFixture(t)
-	d := NewDetail(r, root, keys.DefaultKeyMap(), 0)
+	d := NewDetail(r, root, keys.DefaultKeyMap(), 0, DetailSettings{})
 
 	d.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	wide := d.View()

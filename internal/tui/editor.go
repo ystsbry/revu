@@ -16,12 +16,16 @@ type editorDoneMsg struct {
 	err  error
 }
 
-// editorCmd builds an exec.Cmd that opens path in $EDITOR. If $EDITOR is
-// unset or empty, it falls back to "vi". The env var is split on whitespace
-// to support common forms like "code --wait" or "zed --wait".
-func editorCmd(path string) *exec.Cmd {
-	ed := os.Getenv("EDITOR")
-	if strings.TrimSpace(ed) == "" {
+// editorCmd builds an exec.Cmd that opens path in the user's editor.
+// Resolution order: explicit override > $EDITOR > "vi".
+// The override / env var is split on whitespace to support forms like
+// "code --wait" or "zed --wait".
+func editorCmd(path, override string) *exec.Cmd {
+	ed := strings.TrimSpace(override)
+	if ed == "" {
+		ed = strings.TrimSpace(os.Getenv("EDITOR"))
+	}
+	if ed == "" {
 		ed = "vi"
 	}
 	parts := strings.Fields(ed)
@@ -34,9 +38,10 @@ func editorCmd(path string) *exec.Cmd {
 }
 
 // openEditor returns a tea.Cmd that suspends the program, runs the editor,
-// then dispatches editorDoneMsg with the result.
-func openEditor(path string) tea.Cmd {
-	return tea.ExecProcess(editorCmd(path), func(err error) tea.Msg {
+// then dispatches editorDoneMsg with the result. The override (when non-empty)
+// takes precedence over $EDITOR.
+func openEditor(path, override string) tea.Cmd {
+	return tea.ExecProcess(editorCmd(path, override), func(err error) tea.Msg {
 		return editorDoneMsg{path: path, err: err}
 	})
 }

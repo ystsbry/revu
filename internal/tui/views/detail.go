@@ -14,22 +14,31 @@ import (
 	"github.com/ystsbry/revu/internal/tui/keys"
 )
 
-// horizontalThreshold is the minimum terminal width at which the detail view
-// uses a side-by-side split. Below this, the panes stack vertically.
-const horizontalThreshold = 100
+// DefaultHorizontalThreshold is the minimum terminal width at which the
+// detail view uses a side-by-side split when no Settings override is given.
+const DefaultHorizontalThreshold = 100
 
-// codeContextLines is how many lines of source surrounding the target line
-// the code pane shows.
-const codeContextLines = 5
+// DefaultCodeContextLines is how many lines of source surrounding the target
+// line the code pane shows when no Settings override is given.
+const DefaultCodeContextLines = 5
+
+// DetailSettings tunes the detail view rendering. Zero values fall back to
+// the package-level defaults.
+type DetailSettings struct {
+	CodeContextLines    int
+	HorizontalThreshold int
+}
 
 // Detail is a tea.Model rendering one comment: code excerpt + markdown body.
 // It mutates the underlying Review.Comments[*].Status and emits DirtyMsg
 // when the user accepts/rejects/unflags.
 type Detail struct {
-	keys     keys.KeyMap
-	review   *model.Review
-	repoRoot string
-	index    int
+	keys                keys.KeyMap
+	review              *model.Review
+	repoRoot            string
+	index               int
+	codeContextLines    int
+	horizontalThreshold int
 
 	width  int
 	height int
@@ -43,12 +52,20 @@ type EditMsg struct {
 	Path string // absolute path to the file to edit
 }
 
-func NewDetail(r *model.Review, repoRoot string, km keys.KeyMap, index int) *Detail {
+func NewDetail(r *model.Review, repoRoot string, km keys.KeyMap, index int, s DetailSettings) *Detail {
+	if s.CodeContextLines <= 0 {
+		s.CodeContextLines = DefaultCodeContextLines
+	}
+	if s.HorizontalThreshold <= 0 {
+		s.HorizontalThreshold = DefaultHorizontalThreshold
+	}
 	return &Detail{
-		keys:     km,
-		review:   r,
-		repoRoot: repoRoot,
-		index:    clampIndex(index, len(r.Comments)),
+		keys:                km,
+		review:              r,
+		repoRoot:            repoRoot,
+		index:               clampIndex(index, len(r.Comments)),
+		codeContextLines:    s.CodeContextLines,
+		horizontalThreshold: s.HorizontalThreshold,
 	}
 }
 
@@ -119,7 +136,7 @@ func (d *Detail) View() string {
 	mdPane := d.renderMarkdownPane(c, bodyHeight)
 
 	var body string
-	if d.width >= horizontalThreshold {
+	if d.width >= d.horizontalThreshold {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, codePane, mdPane)
 	} else {
 		body = lipgloss.JoinVertical(lipgloss.Left, codePane, mdPane)
@@ -171,7 +188,7 @@ func (d *Detail) renderMarkdownPane(c *model.Comment, height int) string {
 }
 
 func (d *Detail) paneWidth() int {
-	if d.width >= horizontalThreshold {
+	if d.width >= d.horizontalThreshold {
 		return d.width / 2
 	}
 	return d.width
@@ -182,7 +199,7 @@ func (d *Detail) codeContent(c *model.Comment) (string, error) {
 		return "", errors.New("repo root not configured")
 	}
 	abs := filepath.Join(d.repoRoot, c.Path)
-	return render.Code(abs, c.Line, codeContextLines)
+	return render.Code(abs, c.Line, d.codeContextLines)
 }
 
 func (d *Detail) current() *model.Comment {

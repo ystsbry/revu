@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/ystsbry/revu/internal/filter"
 	"github.com/ystsbry/revu/internal/model"
 	"github.com/ystsbry/revu/internal/tui/keys"
 	"github.com/ystsbry/revu/internal/tui/views"
@@ -43,6 +44,8 @@ type App struct {
 	saver    SaveFunc
 	reloader ReloadFunc
 	repoRoot string
+	settings Settings
+	watcher  *watcher
 
 	cmdMode    bool
 	cmdInput   textinput.Model
@@ -62,6 +65,15 @@ type Config struct {
 	Saver    SaveFunc
 	Reloader ReloadFunc
 	RepoRoot string
+	Settings Settings
+}
+
+// Settings carries user-configurable knobs from config.toml. The zero value
+// is fine; views fall back to their built-in defaults.
+type Settings struct {
+	EditorCommand       string
+	CodeContextLines    int
+	HorizontalThreshold int
 }
 
 func NewApp(cfg Config) *App {
@@ -70,20 +82,34 @@ func NewApp(cfg Config) *App {
 	ti.Prompt = ":"
 	ti.CharLimit = 64
 	return &App{
-		km:       km,
-		list:     views.NewList(cfg.Review, km),
-		detail:   views.NewDetail(cfg.Review, cfg.RepoRoot, km, 0),
+		km:   km,
+		list: views.NewList(cfg.Review, km),
+		detail: views.NewDetail(cfg.Review, cfg.RepoRoot, km, 0, views.DetailSettings{
+			CodeContextLines:    cfg.Settings.CodeContextLines,
+			HorizontalThreshold: cfg.Settings.HorizontalThreshold,
+		}),
 		summary:  views.NewSummary(cfg.Review, km),
 		state:    viewList,
 		review:   cfg.Review,
 		saver:    cfg.Saver,
 		reloader: cfg.Reloader,
 		repoRoot: cfg.RepoRoot,
+		settings: cfg.Settings,
 		cmdInput: ti,
 	}
 }
 
-func (a *App) Init() tea.Cmd { return nil }
+func (a *App) Init() tea.Cmd {
+	if a.review == nil || a.review.BaseDir == "" {
+		return nil
+	}
+	w, err := newWatcher(a.review.BaseDir)
+	if err != nil {
+		return func() tea.Msg { return fsWatcherErrMsg{err: err} }
+	}
+	a.watcher = w
+	return w.listenForChange()
+}
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
@@ -118,7 +144,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case views.EditMsg:
-		return a, openEditor(m.Path)
+		return a, openEditor(m.Path, a.settings.EditorCommand)
 
 	case editorDoneMsg:
 		if m.err != nil {
@@ -130,6 +156,25 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			a.setInfo("reloaded " + filepath.Base(m.path))
 		}
+		return a, nil
+
+	case views.FilterErrMsg:
+		a.setError(fmt.Sprintf("filter: %v", m.Err))
+		return a, nil
+
+	case fsChangeMsg:
+		if err := a.reloadBody(m.path); err != nil {
+			// Path is outside the review (e.g. unrelated .md edited). Stay silent.
+		} else {
+			a.setInfo("reloaded " + filepath.Base(m.path))
+		}
+		if a.watcher != nil {
+			return a, a.watcher.listenForChange()
+		}
+		return a, nil
+
+	case fsWatcherErrMsg:
+		a.setError("watcher unavailable; use :reload after editing files externally")
 		return a, nil
 
 	case submitDoneMsg:
@@ -168,6 +213,11 @@ func (a *App) updateNormalMode(m tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.showHelp = false
 		}
 		return a, nil
+	}
+	// When the list view is capturing keys for its filter input, let it
+	// consume everything (including ":" and "?") until it exits filter mode.
+	if a.state == viewList && a.list.IsFilterMode() {
+		return a.delegateToActive(m)
 	}
 	switch {
 	case key.Matches(m, a.km.Help):
@@ -255,6 +305,8 @@ func (a *App) runCommand(input string) (tea.Model, tea.Cmd) {
 		return a.tryQuit()
 	case "q!", "quit!":
 		return a, tea.Quit
+	case "reload":
+		return a, a.runReload()
 	}
 	if rest, ok := stripPrefixWord(input, "submit"); ok {
 		recognized, dryRun, errMsg := parseSubmitArgs(rest)
@@ -268,7 +320,63 @@ func (a *App) runCommand(input string) (tea.Model, tea.Cmd) {
 		}
 		return a, a.runSubmit(dryRun)
 	}
+	if rest, ok := stripPrefixWord(input, "filter"); ok {
+		return a.runFilterCommand(rest)
+	}
 	a.setError(fmt.Sprintf("unknown command: %s", input))
+	return a, nil
+}
+
+// runReload re-reads summary.md and every comment body file from disk into
+// the in-memory Review. Used as a manual fallback when fsnotify is not
+// available. Status fields are not touched, so user-pending state is safe.
+func (a *App) runReload() tea.Cmd {
+	r := a.review
+	if r == nil || r.BaseDir == "" {
+		a.setError("reload: review has no BaseDir")
+		return nil
+	}
+	if r.SummaryFile != "" {
+		summaryPath := filepath.Join(r.BaseDir, r.SummaryFile)
+		if err := a.reloadBody(summaryPath); err != nil {
+			a.setError(fmt.Sprintf("reload summary: %v", err))
+			return nil
+		}
+	}
+	for i := range r.Comments {
+		c := &r.Comments[i]
+		if c.BodyFile == "" {
+			continue
+		}
+		bodyPath := filepath.Join(r.BaseDir, c.BodyFile)
+		if err := a.reloadBody(bodyPath); err != nil {
+			a.setError(fmt.Sprintf("reload %s: %v", c.ID, err))
+			return nil
+		}
+	}
+	a.setInfo(fmt.Sprintf("reloaded %d comment(s) + summary", len(r.Comments)))
+	return nil
+}
+
+// runFilterCommand implements ":filter <expr>" and ":filter clear".
+func (a *App) runFilterCommand(rest string) (tea.Model, tea.Cmd) {
+	rest = strings.TrimSpace(rest)
+	if rest == "" || rest == "clear" {
+		a.list.ClearFilter()
+		a.setInfo("filter cleared")
+		return a, nil
+	}
+	f, err := filter.Parse(rest)
+	if err != nil {
+		a.setError(fmt.Sprintf("filter: %v", err))
+		return a, nil
+	}
+	a.list.SetFilter(f)
+	if a.list.VisibleCount() == 0 {
+		a.setInfo("filter applied (no matches)")
+	} else {
+		a.setInfo(fmt.Sprintf("filter applied (%d visible)", a.list.VisibleCount()))
+	}
 	return a, nil
 }
 

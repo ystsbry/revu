@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/ystsbry/revu/internal/config"
 	"github.com/ystsbry/revu/internal/model"
 	"github.com/ystsbry/revu/internal/store"
 	"github.com/ystsbry/revu/internal/tui"
@@ -44,11 +45,20 @@ fixture review dirs that have no matching local clone).`,
 			if err != nil {
 				return err
 			}
+			cfg, _, _, cfgErr := config.Load()
+			if cfgErr != nil {
+				return fmt.Errorf("load config: %w", cfgErr)
+			}
 			return tui.Run(tui.Config{
 				Review:   r,
 				Saver:    store.SaveStatuses,
 				Reloader: reloadSubmissionMeta,
 				RepoRoot: repoRoot,
+				Settings: tui.Settings{
+					EditorCommand:       cfg.Editor.Command,
+					CodeContextLines:    cfg.UI.CodeContextLines,
+					HorizontalThreshold: cfg.UI.HorizontalThreshold,
+				},
 			})
 		},
 	}

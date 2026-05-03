@@ -11,7 +11,7 @@ import (
 
 func TestEditorCmdHonorsEDITOR(t *testing.T) {
 	t.Setenv("EDITOR", "code --wait")
-	c := editorCmd("/tmp/x.md")
+	c := editorCmd("/tmp/x.md", "")
 	if !strings.HasSuffix(c.Path, "code") && c.Args[0] != "code" {
 		t.Errorf("editorCmd path = %q args = %v", c.Path, c.Args)
 	}
@@ -22,7 +22,7 @@ func TestEditorCmdHonorsEDITOR(t *testing.T) {
 
 func TestEditorCmdFallsBackToVi(t *testing.T) {
 	t.Setenv("EDITOR", "")
-	c := editorCmd("/tmp/x.md")
+	c := editorCmd("/tmp/x.md", "")
 	if !strings.HasSuffix(c.Args[0], "vi") {
 		t.Errorf("expected vi fallback, got %q", c.Args[0])
 	}
