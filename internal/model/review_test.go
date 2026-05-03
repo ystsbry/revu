@@ -36,3 +36,30 @@ func TestReviewFindComment(t *testing.T) {
 		t.Fatalf("pointer mutation did not propagate")
 	}
 }
+
+func TestCommentLineLabel(t *testing.T) {
+	t.Parallel()
+	intp := func(n int) *int { return &n }
+	sidep := func(s Side) *Side { return &s }
+
+	cases := []struct {
+		name string
+		c    Comment
+		want string
+	}{
+		{"single right", Comment{Line: 7, Side: SideRight}, "7"},
+		{"single left", Comment{Line: 7, Side: SideLeft}, "L7"},
+		{"range right", Comment{Line: 12, Side: SideRight, StartLine: intp(5)}, "5-12"},
+		{"range left", Comment{Line: 12, Side: SideLeft, StartLine: intp(5)}, "L5-L12"},
+		{"cross-side L→R", Comment{Line: 12, Side: SideRight, StartLine: intp(5), StartSide: sidep(SideLeft)}, "L5-R12"},
+		{"cross-side R→L", Comment{Line: 12, Side: SideLeft, StartLine: intp(5), StartSide: sidep(SideRight)}, "R5-L12"},
+		{"explicit same-side L start", Comment{Line: 12, Side: SideLeft, StartLine: intp(5), StartSide: sidep(SideLeft)}, "L5-L12"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.c.LineLabel(); got != tc.want {
+				t.Errorf("LineLabel() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

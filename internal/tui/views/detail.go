@@ -147,8 +147,8 @@ func (d *Detail) View() string {
 func (d *Detail) headerView(c *model.Comment) string {
 	style := lipgloss.NewStyle().Bold(true).Padding(0, 1)
 	pos := fmt.Sprintf("%d / %d", d.index+1, len(d.review.Comments))
-	return style.Render(fmt.Sprintf("%s — %s   %s:%d   %s / %s   [%s]",
-		c.ID, pos, c.Path, c.Line, c.Severity, c.Category, c.Status))
+	return style.Render(fmt.Sprintf("%s — %s   %s:%s   %s / %s   [%s]",
+		c.ID, pos, c.Path, c.LineLabel(), c.Severity, c.Category, c.Status))
 }
 
 func (d *Detail) footerView() string {

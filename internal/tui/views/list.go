@@ -338,7 +338,7 @@ func (l *List) refreshRows() {
 			string(c.Status),
 			string(c.Severity),
 			string(c.Category),
-			fmt.Sprintf("%s:%d", filepath.Base(c.Path), c.Line),
+			fmt.Sprintf("%s:%s", filepath.Base(c.Path), c.LineLabel()),
 		})
 	}
 	l.table.SetRows(rows)
