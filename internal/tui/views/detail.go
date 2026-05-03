@@ -221,20 +221,22 @@ func (d *Detail) codeContent(c *model.Comment) (string, error) {
 
 	switch {
 	case startSide == model.SideRight && c.Side == model.SideRight:
-		// Common case: comment refers entirely to the post-image, which
-		// matches the working tree.
-		return render.CodeRange(filepath.Join(d.repoRoot, c.Path),
-			startLine, endLine, d.codeContextLines)
+		// RIGHT-only: read from head SHA so the comment's line numbers
+		// align with the commit the review was generated against, not
+		// whatever happens to be in the user's working tree right now.
+		raw, err := d.postImageContent(c.Path)
+		if err != nil {
+			// head SHA not set / unreachable (placeholder fixtures, shallow
+			// clones, etc.). Fall back to the working tree.
+			return d.degradedFallback(err, c.Path, startLine, endLine)
+		}
+		return render.CodeBytes(raw, c.Path, startLine, endLine, d.codeContextLines)
 
 	case startSide == c.Side:
 		// Same-side LEFT comment (single line or range). Render pre-image.
 		raw, err := d.preImageContent(c.Path)
 		if err != nil {
-			// pre-image unavailable (no git, missing SHA, etc.). Fall back
-			// to the working tree at the same line numbers; line positions
-			// won't match the LEFT side perfectly, but it's better than
-			// nothing and the banner makes the degradation explicit.
-			return d.degradedFallback(err, c.Path, c.Line)
+			return d.degradedFallback(err, c.Path, startLine, endLine)
 		}
 		return render.CodeBytes(raw, c.Path, startLine, endLine, d.codeContextLines)
 
@@ -244,23 +246,24 @@ func (d *Detail) codeContent(c *model.Comment) (string, error) {
 		// start and end lines anchored by ▶ in the gutter.
 		out, err := d.crossSideHunk(c, startSide, startLine, endLine)
 		if err != nil {
-			// Diff unavailable. Show the post-image at the end line so the
-			// user at least sees one side of the range.
-			return d.degradedFallback(err, c.Path, endLine)
+			// Diff unavailable. Show the working tree at the end line so
+			// the user at least sees one side of the range.
+			return d.degradedFallback(err, c.Path, endLine, endLine)
 		}
 		return out, nil
 	}
 }
 
 // degradedFallback renders a one-line notice followed by the working tree
-// at `line`. Used when pre-image / diff retrieval fails so the user gets
-// some context instead of a wall of error text.
-func (d *Detail) degradedFallback(cause error, path string, line int) (string, error) {
+// at [startLine, endLine]. Used when post-image / pre-image / diff
+// retrieval fails so the user gets some context instead of a wall of
+// error text.
+func (d *Detail) degradedFallback(cause error, path string, startLine, endLine int) (string, error) {
 	notice := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("215")).
 		Faint(true).
-		Render(fmt.Sprintf("(diff/pre-image を取得できないため post-image のみ表示: %s)", shortError(cause)))
-	body, err := render.CodeRange(filepath.Join(d.repoRoot, path), line, line, d.codeContextLines)
+		Render(fmt.Sprintf("(commit から取得できないため working tree を表示: %s)", shortError(cause)))
+	body, err := render.CodeRange(filepath.Join(d.repoRoot, path), startLine, endLine, d.codeContextLines)
 	if err != nil {
 		// Working tree also unavailable — propagate the original cause so
 		// the caller can render its own placeholder.
@@ -327,6 +330,13 @@ func (d *Detail) preImageContent(path string) ([]byte, error) {
 		return nil, errors.New("pre-image source not configured")
 	}
 	return d.preImage.Content(path)
+}
+
+func (d *Detail) postImageContent(path string) ([]byte, error) {
+	if d.preImage == nil {
+		return nil, errors.New("post-image source not configured")
+	}
+	return d.preImage.PostImage(path)
 }
 
 func (d *Detail) current() *model.Comment {

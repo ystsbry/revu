@@ -7,15 +7,21 @@ import (
 	"github.com/ystsbry/revu/internal/git"
 )
 
-// PreImageSource exposes the diff context revu needs to render LEFT-side
-// and cross-side comments accurately: the pre-image of a file (so LEFT
-// line numbers align) and the unified diff between base and head (so
-// cross-side ranges can be shown as a hunk).
+// PreImageSource exposes the diff context revu needs to render comments
+// against the exact commits the review was generated for, instead of the
+// (possibly drifted) working tree:
 //
-// Implementations must cache results by path; the detail view may query
-// the same file repeatedly as the user navigates between comments.
+//   - Content: pre-image of a file (LEFT-side line numbers align)
+//   - PostImage: post-image of a file (RIGHT-side line numbers align even
+//     when the user's working tree has uncommitted changes)
+//   - Diff: unified diff between base and head (cross-side hunks)
+//
+// The name "PreImageSource" predates PostImage; it stays for API
+// stability. Implementations must cache results by path since the detail
+// view may query the same file repeatedly as the user navigates.
 type PreImageSource interface {
 	Content(path string) ([]byte, error)
+	PostImage(path string) ([]byte, error)
 	Diff(path string) ([]byte, error)
 }
 
@@ -36,6 +42,7 @@ type gitPreImage struct {
 	resolveErr   error
 	resolved     bool
 	contentCache map[string][]byte
+	postCache    map[string][]byte
 	diffCache    map[string][]byte
 	diffCtx      int
 }
@@ -49,6 +56,7 @@ func NewGitPreImage(repoRoot, headSHA, baseRef string) PreImageSource {
 		headSHA:      headSHA,
 		baseRef:      baseRef,
 		contentCache: make(map[string][]byte),
+		postCache:    make(map[string][]byte),
 		diffCache:    make(map[string][]byte),
 		diffCtx:      DefaultDiffContextLines,
 	}
@@ -93,6 +101,24 @@ func (g *gitPreImage) Content(path string) ([]byte, error) {
 		return nil, err
 	}
 	g.contentCache[path] = raw
+	return raw, nil
+}
+
+func (g *gitPreImage) PostImage(path string) ([]byte, error) {
+	if cached, ok := g.postCache[path]; ok {
+		return cached, nil
+	}
+	if g.repoRoot == "" {
+		return nil, errors.New("preimage: repo root not configured")
+	}
+	if g.headSHA == "" {
+		return nil, errors.New("preimage: head SHA not set on review")
+	}
+	raw, err := git.Show(g.repoRoot, g.headSHA, path)
+	if err != nil {
+		return nil, err
+	}
+	g.postCache[path] = raw
 	return raw, nil
 }
 

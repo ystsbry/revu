@@ -134,8 +134,9 @@ func TestDetailViewLayout(t *testing.T) {
 
 // stubPreImage implements PreImageSource for testing without spawning git.
 type stubPreImage struct {
-	files map[string][]byte
-	diffs map[string][]byte
+	files     map[string][]byte // pre-image
+	postFiles map[string][]byte // post-image
+	diffs     map[string][]byte
 }
 
 func (s *stubPreImage) Content(path string) ([]byte, error) {
@@ -143,6 +144,13 @@ func (s *stubPreImage) Content(path string) ([]byte, error) {
 		return b, nil
 	}
 	return nil, fmt.Errorf("stubPreImage: no entry for %q", path)
+}
+
+func (s *stubPreImage) PostImage(path string) ([]byte, error) {
+	if b, ok := s.postFiles[path]; ok {
+		return b, nil
+	}
+	return nil, fmt.Errorf("stubPreImage: no post-image for %q", path)
 }
 
 func (s *stubPreImage) Diff(path string) ([]byte, error) {
@@ -238,5 +246,77 @@ func TestDetailCodeContentCrossSide(t *testing.T) {
 	}
 	if got := strings.Count(out, "▶"); got != 2 {
 		t.Errorf("expected anchor markers on both endpoints, got %d:\n%s", got, out)
+	}
+}
+
+func TestDetailCodeContentRightSideUsesPostImage(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	// Working tree carries DIFFERENT content than what the review was
+	// generated against, simulating the user having uncommitted changes
+	// after the review was created.
+	workingTree := "package x\n\nfunc Drifted() {}\n"
+	if err := os.WriteFile(filepath.Join(root, "x.go"), []byte(workingTree), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The review's head_sha state — what should actually be displayed.
+	postSrc := "package x\n\nfunc Reviewed() {}\n"
+	pi := &stubPreImage{
+		postFiles: map[string][]byte{"x.go": []byte(postSrc)},
+	}
+
+	r := &model.Review{
+		BaseDir: root,
+		PR:      model.PRMeta{Repo: "o/r", Number: 1, HeadSHA: "h", BaseBranch: "main"},
+		Comments: []model.Comment{
+			{ID: "c1", Status: model.StatusPending, Severity: model.SeverityMinor,
+				Category: model.CategoryDesign, Path: "x.go", Line: 3,
+				Side: model.SideRight, BodyFile: "c1.md", Body: "x"},
+		},
+	}
+	d := NewDetail(r, root, keys.DefaultKeyMap(), 0, DetailSettings{PreImage: pi})
+
+	out, err := d.codeContent(&r.Comments[0])
+	if err != nil {
+		t.Fatalf("codeContent: %v", err)
+	}
+	if !strings.Contains(out, "Reviewed") {
+		t.Errorf("RIGHT comment should render post-image; got:\n%s", out)
+	}
+	if strings.Contains(out, "Drifted") {
+		t.Errorf("RIGHT comment must not pull from working tree when post-image is available; got:\n%s", out)
+	}
+}
+
+func TestDetailCodeContentRightSideFallsBackToWorkingTree(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	workingTree := "package x\n\nfunc Local() {}\n"
+	if err := os.WriteFile(filepath.Join(root, "x.go"), []byte(workingTree), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Stub returns no post-image — simulates head_sha not resolving.
+	pi := &stubPreImage{}
+
+	r := &model.Review{
+		BaseDir: root,
+		PR:      model.PRMeta{Repo: "o/r", Number: 1, HeadSHA: "abc1234", BaseBranch: "main"},
+		Comments: []model.Comment{
+			{ID: "c1", Status: model.StatusPending, Severity: model.SeverityMinor,
+				Category: model.CategoryDesign, Path: "x.go", Line: 3,
+				Side: model.SideRight, BodyFile: "c1.md", Body: "x"},
+		},
+	}
+	d := NewDetail(r, root, keys.DefaultKeyMap(), 0, DetailSettings{PreImage: pi})
+
+	out, err := d.codeContent(&r.Comments[0])
+	if err != nil {
+		t.Fatalf("codeContent: %v", err)
+	}
+	if !strings.Contains(out, "Local") {
+		t.Errorf("expected working-tree fallback content; got:\n%s", out)
+	}
+	if !strings.Contains(out, "working tree") {
+		t.Errorf("expected degraded notice mentioning working tree; got:\n%s", out)
 	}
 }
