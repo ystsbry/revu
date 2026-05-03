@@ -1,0 +1,94 @@
+version: 2
+
+project_name: revu
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: revu
+    main: ./cmd/revu
+    binary: revu
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: revu
+    name_template: "revu_{{.Version}}_{{.Os}}_{{.Arch}}"
+    formats:
+      - tar.gz
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: git
+  groups:
+    - title: "Features"
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: "Bug fixes"
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: "Performance"
+      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: "Refactor"
+      regexp: '^.*?refactor(\([[:word:]]+\))??!?:.+$'
+      order: 3
+    - title: "Others"
+      order: 999
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - '^ci:'
+      - '^build:'
+      - '^style:'
+      - '(?i)^merge '
+
+release:
+  github:
+    owner: ystsbry
+    name: revu
+  draft: false
+  prerelease: auto
+  header: |
+    ## revu {{.Tag}}
+
+    ### Install
+
+    ```bash
+    curl -sSfL https://raw.githubusercontent.com/ystsbry/revu/main/install.sh | sh
+    ```
+
+    バージョン指定:
+
+    ```bash
+    curl -sSfL https://raw.githubusercontent.com/ystsbry/revu/main/install.sh | VERSION={{.Tag}} sh
+    ```
+  footer: |
+    **Full changelog**: https://github.com/ystsbry/revu/compare/{{.PreviousTag}}...{{.Tag}}
