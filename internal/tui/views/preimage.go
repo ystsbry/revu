@@ -7,29 +7,37 @@ import (
 	"github.com/ystsbry/revu/internal/git"
 )
 
-// PreImageSource fetches the base-commit version of files in the repo. Used
-// when a comment refers to a LEFT-side line so the line numbers align with
-// the pre-image of the diff (rather than the working tree, which carries
-// the post-image).
+// PreImageSource exposes the diff context revu needs to render LEFT-side
+// and cross-side comments accurately: the pre-image of a file (so LEFT
+// line numbers align) and the unified diff between base and head (so
+// cross-side ranges can be shown as a hunk).
 //
-// Implementations must cache file contents by path; the detail view may
-// query the same file repeatedly as the user navigates between comments.
+// Implementations must cache results by path; the detail view may query
+// the same file repeatedly as the user navigates between comments.
 type PreImageSource interface {
 	Content(path string) ([]byte, error)
+	Diff(path string) ([]byte, error)
 }
+
+// DefaultDiffContextLines is how many lines of context git diff carries
+// per hunk by default. Aligned with code.go's default so LEFT-side single
+// lines and cross-side hunks show comparable amounts of surrounding code.
+const DefaultDiffContextLines = 5
 
 // gitPreImage is the default PreImageSource backed by `git show`. The base
 // SHA is resolved lazily on first call via merge-base(headSHA, baseRef);
 // this avoids spawning git for reviews that contain only RIGHT-side
 // comments.
 type gitPreImage struct {
-	repoRoot   string
-	headSHA    string
-	baseRef    string // typically a branch name like "main"
-	baseSHA    string // resolved on first use
-	resolveErr error
-	resolved   bool
-	cache      map[string][]byte
+	repoRoot     string
+	headSHA      string
+	baseRef      string // typically a branch name like "main"
+	baseSHA      string // resolved on first use
+	resolveErr   error
+	resolved     bool
+	contentCache map[string][]byte
+	diffCache    map[string][]byte
+	diffCtx      int
 }
 
 // NewGitPreImage constructs a PreImageSource backed by `git show`. baseRef
@@ -37,10 +45,12 @@ type gitPreImage struct {
 // is computed as merge-base(headSHA, baseRef) on demand.
 func NewGitPreImage(repoRoot, headSHA, baseRef string) PreImageSource {
 	return &gitPreImage{
-		repoRoot: repoRoot,
-		headSHA:  headSHA,
-		baseRef:  baseRef,
-		cache:    make(map[string][]byte),
+		repoRoot:     repoRoot,
+		headSHA:      headSHA,
+		baseRef:      baseRef,
+		contentCache: make(map[string][]byte),
+		diffCache:    make(map[string][]byte),
+		diffCtx:      DefaultDiffContextLines,
 	}
 }
 
@@ -71,7 +81,7 @@ func (g *gitPreImage) resolveBase() (string, error) {
 }
 
 func (g *gitPreImage) Content(path string) ([]byte, error) {
-	if cached, ok := g.cache[path]; ok {
+	if cached, ok := g.contentCache[path]; ok {
 		return cached, nil
 	}
 	base, err := g.resolveBase()
@@ -82,6 +92,22 @@ func (g *gitPreImage) Content(path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	g.cache[path] = raw
+	g.contentCache[path] = raw
+	return raw, nil
+}
+
+func (g *gitPreImage) Diff(path string) ([]byte, error) {
+	if cached, ok := g.diffCache[path]; ok {
+		return cached, nil
+	}
+	base, err := g.resolveBase()
+	if err != nil {
+		return nil, err
+	}
+	raw, err := git.Diff(g.repoRoot, base, g.headSHA, path, g.diffCtx)
+	if err != nil {
+		return nil, err
+	}
+	g.diffCache[path] = raw
 	return raw, nil
 }

@@ -133,13 +133,23 @@ func TestDetailViewLayout(t *testing.T) {
 }
 
 // stubPreImage implements PreImageSource for testing without spawning git.
-type stubPreImage struct{ files map[string][]byte }
+type stubPreImage struct {
+	files map[string][]byte
+	diffs map[string][]byte
+}
 
 func (s *stubPreImage) Content(path string) ([]byte, error) {
 	if b, ok := s.files[path]; ok {
 		return b, nil
 	}
 	return nil, fmt.Errorf("stubPreImage: no entry for %q", path)
+}
+
+func (s *stubPreImage) Diff(path string) ([]byte, error) {
+	if b, ok := s.diffs[path]; ok {
+		return b, nil
+	}
+	return nil, fmt.Errorf("stubPreImage: no diff for %q", path)
 }
 
 func TestDetailCodeContentLeftSide(t *testing.T) {
@@ -181,14 +191,23 @@ func TestDetailCodeContentLeftSide(t *testing.T) {
 func TestDetailCodeContentCrossSide(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	// Working tree (post-image): line 3 contains New().
-	postSrc := "package x\n\nfunc New() {}\n"
-	if err := os.WriteFile(filepath.Join(root, "x.go"), []byte(postSrc), 0o644); err != nil {
+	// codeContent for cross-side does not touch the working tree (the diff
+	// hunk supplied via PreImageSource is the sole source of code), but
+	// repoRoot must be set so the early-return guard passes.
+	if err := os.WriteFile(filepath.Join(root, "x.go"), []byte("dummy\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Pre-image: line 3 contains Old(); range starts here.
-	preSrc := "package x\n\nfunc Old() {}\n"
-	pi := &stubPreImage{files: map[string][]byte{"x.go": []byte(preSrc)}}
+	stubDiff := "diff --git a/x.go b/x.go\n" +
+		"--- a/x.go\n" +
+		"+++ b/x.go\n" +
+		"@@ -1,3 +1,3 @@\n" +
+		" package x\n" +
+		" \n" +
+		"-func Old() {}\n" +
+		"+func New() {}\n"
+	pi := &stubPreImage{
+		diffs: map[string][]byte{"x.go": []byte(stubDiff)},
+	}
 
 	startLine := 3
 	startSide := model.SideLeft
@@ -210,15 +229,14 @@ func TestDetailCodeContentCrossSide(t *testing.T) {
 	if err != nil {
 		t.Fatalf("codeContent: %v", err)
 	}
-	// Both pre-image and post-image content must appear in the cross-side view.
-	if !strings.Contains(out, "Old") {
-		t.Errorf("cross-side view missing pre-image excerpt:\n%s", out)
+	// The unified diff hunk must show both deletion and addition, plus the
+	// hunk header. Anchor markers should appear on each side.
+	for _, want := range []string{"@@ -1,3 +1,3 @@", "- func Old()", "+ func New()"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("cross-side hunk missing %q in:\n%s", want, out)
+		}
 	}
-	if !strings.Contains(out, "New") {
-		t.Errorf("cross-side view missing post-image excerpt:\n%s", out)
-	}
-	// Separator labels should be present so the user can tell which is which.
-	if !strings.Contains(out, "変更前") || !strings.Contains(out, "変更後") {
-		t.Errorf("expected 変更前/変更後 separators in:\n%s", out)
+	if got := strings.Count(out, "▶"); got != 2 {
+		t.Errorf("expected anchor markers on both endpoints, got %d:\n%s", got, out)
 	}
 }

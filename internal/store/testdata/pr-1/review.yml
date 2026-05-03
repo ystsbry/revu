@@ -1,10 +1,13 @@
 schema_version: 1
 
+# このフィクスチャは revu 自身の実コミットに pin している。TUI で `--repo-root .`
+# 開いたとき、pre-image / cross-side の差分描画が実際に動くようにするための工夫。
+# force-push やブランチの reset で SHA が失効したらこのファイルを更新すること。
 pr:
   repo: ystsbry/revu
   number: 1
-  head_sha: abc1234
-  base_branch: main
+  head_sha: dbb88f145ce18d736daf7c064f0fb9c2b43761ba   # feat(tui): LEFT 側 / クロスサイド範囲のコードを pre-image から表示
+  base_branch: 5382d9758aefca23d8781022febc2a75fd52f34f # ci(release): GoReleaser 直前
 
 generated_at: 2026-05-03T14:30:00+09:00
 generated_by:
@@ -21,7 +24,7 @@ comments:
     severity: major
     category: design
     path: internal/render/code.go
-    line: 100
+    line: 55                          # `lexer := lexers.Match(hintPath)`
     side: RIGHT
     body_file: comments/c1-render-code.md
 
@@ -30,7 +33,7 @@ comments:
     severity: nit
     category: style
     path: internal/store/loader.go
-    line: 130
+    line: 125                         # `return fmt.Errorf("invalid side %q", c.Side)`
     side: RIGHT
     body_file: comments/c2-store-loader.md
 
@@ -39,7 +42,7 @@ comments:
     severity: minor
     category: perf
     path: internal/tui/views/detail.go
-    line: 220
+    line: 230                         # `raw, err := d.preImageContent(c.Path)`
     side: RIGHT
     body_file: comments/c3-tui-detail.md
 
@@ -48,7 +51,7 @@ comments:
     severity: major
     category: bug
     path: internal/github/payload.go
-    line: 60
+    line: 67                          # `pc.StartSide = string(*c.StartSide)`
     side: RIGHT
     body_file: comments/c4-github-payload.md
 
@@ -58,20 +61,21 @@ comments:
     severity: minor
     category: design
     path: internal/tui/views/detail.go
-    start_line: 197
-    line: 215
+    start_line: 221                   # `switch {`
+    line: 243                         # 末尾の `}`
     side: RIGHT
     body_file: comments/c5-tui-detail-range.md
 
-  # クロスサイド範囲 (LEFT 旧コード → RIGHT 新コード)。
-  # 旧バリデーション 1 行を、新しい複数行ブロックに差し替えた変更へのレビュー。
+  # クロスサイド範囲 (LEFT 旧 1 行検証 → RIGHT 新 13 行ブロック)。
+  # base SHA では 137 行目に単一の `start_line <= line` 検証があり、
+  # head SHA では 155 行目で同じ意味の検証ブロックが終端する。
   - id: c6
     status: pending
     severity: nit
     category: style
     path: internal/store/loader.go
-    start_line: 130
+    start_line: 137                   # base: 旧 `start_line <= line` の Errorf 行
     start_side: LEFT
-    line: 142
+    line: 155                         # head: 新 if c.StartLine ブロック末尾の `}`
     side: RIGHT
     body_file: comments/c6-store-loader-crossside.md

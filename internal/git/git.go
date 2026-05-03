@@ -37,6 +37,40 @@ func Show(repoRoot, ref, path string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
+// Diff returns the unified diff for `path` between baseRef and headRef in
+// the repository at repoRoot, with `ctx` lines of surrounding context per
+// hunk. Equivalent to:
+//
+//	git -C repoRoot diff --no-color -U<ctx> baseRef..headRef -- path
+//
+// The returned bytes contain the standard "diff --git", "---", "+++",
+// "@@ ... @@" headers followed by hunk lines.
+func Diff(repoRoot, baseRef, headRef, path string, ctx int) ([]byte, error) {
+	if repoRoot == "" {
+		return nil, fmt.Errorf("git.Diff: repoRoot is empty")
+	}
+	if baseRef == "" || headRef == "" {
+		return nil, fmt.Errorf("git.Diff: refs must be non-empty")
+	}
+	if path == "" {
+		return nil, fmt.Errorf("git.Diff: path is empty")
+	}
+	if ctx < 0 {
+		ctx = 0
+	}
+	cmd := exec.Command("git", "-C", repoRoot, "diff", "--no-color",
+		fmt.Sprintf("-U%d", ctx),
+		baseRef+".."+headRef, "--", path)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("git diff %s..%s -- %s: %w: %s",
+			baseRef, headRef, path, err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.Bytes(), nil
+}
+
 // MergeBase returns the merge-base commit SHA between two refs.
 // Equivalent to: `git -C repoRoot merge-base a b`.
 func MergeBase(repoRoot, a, b string) (string, error) {

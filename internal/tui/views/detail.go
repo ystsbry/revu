@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/ystsbry/revu/internal/diff"
 	"github.com/ystsbry/revu/internal/model"
 	"github.com/ystsbry/revu/internal/render"
 	"github.com/ystsbry/revu/internal/tui/keys"
@@ -229,50 +230,96 @@ func (d *Detail) codeContent(c *model.Comment) (string, error) {
 		// Same-side LEFT comment (single line or range). Render pre-image.
 		raw, err := d.preImageContent(c.Path)
 		if err != nil {
-			return "", err
+			// pre-image unavailable (no git, missing SHA, etc.). Fall back
+			// to the working tree at the same line numbers; line positions
+			// won't match the LEFT side perfectly, but it's better than
+			// nothing and the banner makes the degradation explicit.
+			return d.degradedFallback(err, c.Path, c.Line)
 		}
 		return render.CodeBytes(raw, c.Path, startLine, endLine, d.codeContextLines)
 
 	default:
-		// Cross-side range. Show two excerpts stacked: the start (typically
-		// LEFT) from the pre-image, and the end (typically RIGHT) from the
-		// working tree. Each excerpt highlights its own anchor line so the
-		// reader can locate where the range begins and ends.
-		return d.crossSideExcerpt(c, startSide, startLine, endLine)
-	}
-}
-
-func (d *Detail) crossSideExcerpt(c *model.Comment, startSide model.Side, startLine, endLine int) (string, error) {
-	startBlock, startErr := d.sideExcerpt(c.Path, startSide, startLine)
-	endBlock, endErr := d.sideExcerpt(c.Path, c.Side, endLine)
-	if startErr != nil && endErr != nil {
-		return "", startErr
-	}
-
-	var b strings.Builder
-	if startErr == nil {
-		fmt.Fprintf(&b, "--- %s (変更前) ---\n", startSide)
-		b.WriteString(startBlock)
-	}
-	if endErr == nil {
-		if startErr == nil {
-			b.WriteByte('\n')
+		// Cross-side range. Render the underlying unified diff hunk so the
+		// reader sees -/+ markers exactly as on GitHub, with the comment's
+		// start and end lines anchored by ▶ in the gutter.
+		out, err := d.crossSideHunk(c, startSide, startLine, endLine)
+		if err != nil {
+			// Diff unavailable. Show the post-image at the end line so the
+			// user at least sees one side of the range.
+			return d.degradedFallback(err, c.Path, endLine)
 		}
-		fmt.Fprintf(&b, "--- %s (変更後) ---\n", c.Side)
-		b.WriteString(endBlock)
+		return out, nil
 	}
-	return b.String(), nil
 }
 
-func (d *Detail) sideExcerpt(path string, side model.Side, line int) (string, error) {
-	if side == model.SideRight {
-		return render.CodeRange(filepath.Join(d.repoRoot, path), line, line, d.codeContextLines)
-	}
-	raw, err := d.preImageContent(path)
+// degradedFallback renders a one-line notice followed by the working tree
+// at `line`. Used when pre-image / diff retrieval fails so the user gets
+// some context instead of a wall of error text.
+func (d *Detail) degradedFallback(cause error, path string, line int) (string, error) {
+	notice := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("215")).
+		Faint(true).
+		Render(fmt.Sprintf("(diff/pre-image を取得できないため post-image のみ表示: %s)", shortError(cause)))
+	body, err := render.CodeRange(filepath.Join(d.repoRoot, path), line, line, d.codeContextLines)
 	if err != nil {
-		return "", err
+		// Working tree also unavailable — propagate the original cause so
+		// the caller can render its own placeholder.
+		return "", cause
 	}
-	return render.CodeBytes(raw, path, line, line, d.codeContextLines)
+	return notice + "\n\n" + body, nil
+}
+
+// shortError trims wrapped error chains down to the innermost message so
+// the notice line stays readable.
+func shortError(err error) string {
+	msg := err.Error()
+	if i := strings.LastIndex(msg, ": "); i > 0 && i+2 < len(msg) {
+		msg = msg[i+2:]
+	}
+	return msg
+}
+
+func (d *Detail) crossSideHunk(c *model.Comment, startSide model.Side, startLine, endLine int) (string, error) {
+	if d.preImage == nil {
+		return "", errors.New("pre-image source not configured")
+	}
+	raw, err := d.preImage.Diff(c.Path)
+	if err != nil {
+		return "", fmt.Errorf("fetch diff: %w", err)
+	}
+	hunks, err := diff.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("parse diff: %w", err)
+	}
+	h := diff.FindHunkForRange(hunks, startLine, sideByte(startSide), endLine, sideByte(c.Side))
+	if h == nil {
+		return "", fmt.Errorf("no hunk covers %s%d → %s%d in %s",
+			startSide, startLine, c.Side, endLine, c.Path)
+	}
+	opts := render.DiffHunkOptions{}
+	if startSide == model.SideLeft {
+		opts.AnchorOldLine = startLine
+	} else {
+		opts.AnchorNewLine = startLine
+	}
+	if c.Side == model.SideLeft {
+		// Endpoint LEFT — only set if it differs from start anchor.
+		if opts.AnchorOldLine == 0 {
+			opts.AnchorOldLine = endLine
+		}
+	} else {
+		if opts.AnchorNewLine == 0 {
+			opts.AnchorNewLine = endLine
+		}
+	}
+	return render.DiffHunk(*h, opts), nil
+}
+
+func sideByte(s model.Side) byte {
+	if s == model.SideLeft {
+		return 'L'
+	}
+	return 'R'
 }
 
 func (d *Detail) preImageContent(path string) ([]byte, error) {

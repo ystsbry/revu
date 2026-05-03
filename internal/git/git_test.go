@@ -108,6 +108,36 @@ func TestMergeBaseResolves(t *testing.T) {
 	}
 }
 
+func TestDiffReturnsUnifiedDiff(t *testing.T) {
+	root, baseSHA, headSHA := initRepo(t)
+
+	got, err := Diff(root, baseSHA, headSHA, "foo.go", 3)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	out := string(got)
+	for _, want := range []string{"@@", "-func Old()", "+func New()"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in diff:\n%s", want, out)
+		}
+	}
+}
+
+func TestDiffEmptyArgs(t *testing.T) {
+	if _, err := Diff("", "a", "b", "p", 3); err == nil {
+		t.Error("empty repoRoot should error")
+	}
+	if _, err := Diff("/tmp", "", "b", "p", 3); err == nil {
+		t.Error("empty baseRef should error")
+	}
+	if _, err := Diff("/tmp", "a", "", "p", 3); err == nil {
+		t.Error("empty headRef should error")
+	}
+	if _, err := Diff("/tmp", "a", "b", "", 3); err == nil {
+		t.Error("empty path should error")
+	}
+}
+
 func TestMergeBaseEmptyArgs(t *testing.T) {
 	if _, err := MergeBase("", "a", "b"); err == nil {
 		t.Error("empty repoRoot should error")
