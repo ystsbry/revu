@@ -20,6 +20,11 @@ import (
 // up a filesystem fixture.
 type SaveFunc func(*model.Review) error
 
+// ReloadFunc re-reads review.yml and copies SubmittedAt/ReviewID back into
+// the given Review. Used after `:submit` finishes in a subprocess so the
+// in-memory view reflects the new submission record.
+type ReloadFunc func(*model.Review) error
+
 type viewState int
 
 const (
@@ -36,6 +41,7 @@ type App struct {
 	state    viewState
 	review   *model.Review
 	saver    SaveFunc
+	reloader ReloadFunc
 	repoRoot string
 
 	cmdMode    bool
@@ -54,6 +60,7 @@ type App struct {
 type Config struct {
 	Review   *model.Review
 	Saver    SaveFunc
+	Reloader ReloadFunc
 	RepoRoot string
 }
 
@@ -70,6 +77,7 @@ func NewApp(cfg Config) *App {
 		state:    viewList,
 		review:   cfg.Review,
 		saver:    cfg.Saver,
+		reloader: cfg.Reloader,
 		repoRoot: cfg.RepoRoot,
 		cmdInput: ti,
 	}
@@ -122,6 +130,24 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			a.setInfo("reloaded " + filepath.Base(m.path))
 		}
+		return a, nil
+
+	case submitDoneMsg:
+		if m.err != nil {
+			a.setError(fmt.Sprintf("submit: %v", m.err))
+			return a, nil
+		}
+		if m.dryRun {
+			a.setInfo("dry-run complete")
+			return a, nil
+		}
+		if a.reloader != nil {
+			if err := a.reloader(a.review); err != nil {
+				a.setError(fmt.Sprintf("reload after submit: %v", err))
+				return a, nil
+			}
+		}
+		a.setInfo("submit complete")
 		return a, nil
 
 	case tea.KeyMsg:
@@ -229,10 +255,34 @@ func (a *App) runCommand(input string) (tea.Model, tea.Cmd) {
 		return a.tryQuit()
 	case "q!", "quit!":
 		return a, tea.Quit
-	default:
-		a.setError(fmt.Sprintf("unknown command: %s", input))
-		return a, nil
 	}
+	if rest, ok := stripPrefixWord(input, "submit"); ok {
+		recognized, dryRun, errMsg := parseSubmitArgs(rest)
+		if !recognized {
+			a.setError(errMsg)
+			return a, nil
+		}
+		if a.dirty {
+			a.setError("save status changes first (:save), then :submit")
+			return a, nil
+		}
+		return a, a.runSubmit(dryRun)
+	}
+	a.setError(fmt.Sprintf("unknown command: %s", input))
+	return a, nil
+}
+
+// stripPrefixWord returns the remainder after the first whitespace-delimited
+// word if it equals prefix. ("submit --dry-run", "submit") -> ("--dry-run", true)
+// ("submit", "submit") -> ("", true). Otherwise returns ("", false).
+func stripPrefixWord(input, prefix string) (string, bool) {
+	if input == prefix {
+		return "", true
+	}
+	if strings.HasPrefix(input, prefix+" ") {
+		return input[len(prefix)+1:], true
+	}
+	return "", false
 }
 
 func (a *App) doSave() tea.Cmd {

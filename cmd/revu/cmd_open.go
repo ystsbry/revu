@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/ystsbry/revu/internal/model"
 	"github.com/ystsbry/revu/internal/store"
 	"github.com/ystsbry/revu/internal/tui"
 )
@@ -46,6 +47,7 @@ fixture review dirs that have no matching local clone).`,
 			return tui.Run(tui.Config{
 				Review:   r,
 				Saver:    store.SaveStatuses,
+				Reloader: reloadSubmissionMeta,
 				RepoRoot: repoRoot,
 			})
 		},
@@ -53,6 +55,19 @@ fixture review dirs that have no matching local clone).`,
 	cmd.Flags().StringVar(&repoRootFlag, "repo-root", "",
 		"path to the local clone (skips cwd verification when set)")
 	return cmd
+}
+
+// reloadSubmissionMeta re-reads review.yml and copies SubmittedAt/ReviewID
+// onto the in-memory Review. Used after `:submit` runs in a subprocess so
+// the TUI shows the new submission record.
+func reloadSubmissionMeta(r *model.Review) error {
+	newR, err := store.Load(r.BaseDir)
+	if err != nil {
+		return err
+	}
+	r.SubmittedAt = newR.SubmittedAt
+	r.ReviewID = newR.ReviewID
+	return nil
 }
 
 // resolveRepoRoot returns the absolute repo root to hand to the TUI.
