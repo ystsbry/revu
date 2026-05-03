@@ -6,12 +6,12 @@ Claude Code が生成した PR レビューを TUI で確認・編集し、GitHu
 
 ## ステータス
 
-開発中（MVP）。Phase 1〜4 完了相当。
+開発中（MVP）。Phase 1〜5 完了相当。
 
 ## 全体ワークフロー
 
 ```
-[1] Claude Code の review-pr skill が PR レビューを生成
+[1] Claude Code で /review-pr <PR_NUMBER> を実行
         ↓
 [2] ~/.revu/{owner}/{repo}/pr-{N}/ に review.yml + summary.md + comments/*.md が出力される
         ↓
@@ -34,8 +34,43 @@ make build
 ## 必要なもの
 
 - Go 1.23 以上
-- `gh` CLI（`revu submit` でのみ必要、`gh auth login` 済みであること）
+- `gh` CLI（`revu submit` および `review-pr` skill で使用、`gh auth login` 済みであること）
 - 投稿対象 PR のローカル clone（`revu open` を実行する場所）
+- Claude Code（レビュー生成に `review-pr` skill を使う場合）
+
+## Claude Code skill のインストール
+
+レビュー生成は Claude Code の `review-pr` skill が担当します。本リポジトリの `skills/review-pr/` を `~/.claude/skills/` にシンボリックリンクして使います。
+
+```bash
+ln -s "$PWD/skills/review-pr" "$HOME/.claude/skills/review-pr"
+```
+
+Claude Code に `/review-pr <PR_NUMBER>` と入力すると skill が起動し、`~/.revu/{owner}/{repo}/pr-{N}/` 配下にレビューを書き出します。
+
+```
+/review-pr 123
+/review-pr 123 --focus security,perf
+```
+
+skill が完了したら `revu open` で開けます。
+
+## テンプレートのカスタマイズ
+
+`review-pr` skill が生成するサマリとインラインコメントの構造はテンプレートで決まっています。デフォルトは `~/.claude/skills/review-pr/templates/` 配下:
+
+- `summary.md.tmpl` — PR 全体サマリ
+- `inline-comment.md.tmpl` — 各インラインコメント
+
+**ユーザー上書き** は `~/.config/revu/templates/` に同名ファイルを置くと適用されます (`$REVU_TEMPLATES` 環境変数で別ディレクトリ指定可能)。
+
+```bash
+mkdir -p ~/.config/revu/templates
+cp ~/.claude/skills/review-pr/templates/summary.md.tmpl ~/.config/revu/templates/
+# ↑ お手本としてコピーしてから編集する
+```
+
+テンプレートはあくまで「お手本」で、Claude が構造ガイドとして参照するだけです。固定の文字列置換ではありません。
 
 ## コマンド一覧
 
