@@ -43,11 +43,12 @@ func runeKey(r rune) tea.KeyMsg {
 func TestAppDirtyAfterAccept(t *testing.T) {
 	t.Parallel()
 	r := sampleReview()
-	a := NewApp(r, func(*model.Review) error { return nil })
+	a := NewApp(Config{Review: r, Saver: func(*model.Review) error { return nil }})
 
 	if a.Dirty() {
 		t.Fatalf("should start clean")
 	}
+	a.Update(runeKey('j')) // summary -> c1
 	driveKey(a, runeKey('a'))
 	if !a.Dirty() {
 		t.Errorf("expected dirty after 'a' key")
@@ -61,8 +62,9 @@ func TestAppSaveCommand(t *testing.T) {
 	t.Parallel()
 	r := sampleReview()
 	saved := false
-	a := NewApp(r, func(rr *model.Review) error { saved = true; return nil })
+	a := NewApp(Config{Review: r, Saver: func(rr *model.Review) error { saved = true; return nil }})
 
+	a.Update(runeKey('j'))    // summary -> c1
 	driveKey(a, runeKey('a')) // mutate, dirty=true
 	if !a.Dirty() {
 		t.Fatal("should be dirty")
@@ -89,8 +91,9 @@ func TestAppSaveCommand(t *testing.T) {
 func TestAppSaveErrorKeepsDirty(t *testing.T) {
 	t.Parallel()
 	r := sampleReview()
-	a := NewApp(r, func(*model.Review) error { return errors.New("boom") })
+	a := NewApp(Config{Review: r, Saver: func(*model.Review) error { return errors.New("boom") }})
 
+	a.Update(runeKey('j')) // summary -> c1
 	driveKey(a, runeKey('a'))
 
 	a.Update(runeKey(':'))
@@ -110,8 +113,9 @@ func TestAppSaveErrorKeepsDirty(t *testing.T) {
 func TestAppQuitGuardsAgainstDirty(t *testing.T) {
 	t.Parallel()
 	r := sampleReview()
-	a := NewApp(r, func(*model.Review) error { return nil })
+	a := NewApp(Config{Review: r, Saver: func(*model.Review) error { return nil }})
 
+	a.Update(runeKey('j'))    // summary -> c1
 	driveKey(a, runeKey('a')) // dirty
 
 	_, cmd := a.Update(runeKey('q'))
@@ -138,7 +142,7 @@ func TestAppQuitGuardsAgainstDirty(t *testing.T) {
 func TestAppQuitClean(t *testing.T) {
 	t.Parallel()
 	r := sampleReview()
-	a := NewApp(r, func(*model.Review) error { return nil })
+	a := NewApp(Config{Review: r, Saver: func(*model.Review) error { return nil }})
 
 	_, cmd := a.Update(runeKey('q'))
 	if cmd == nil {
@@ -152,8 +156,9 @@ func TestAppQuitClean(t *testing.T) {
 func TestAppForceQuitCommand(t *testing.T) {
 	t.Parallel()
 	r := sampleReview()
-	a := NewApp(r, func(*model.Review) error { return nil })
+	a := NewApp(Config{Review: r, Saver: func(*model.Review) error { return nil }})
 
+	a.Update(runeKey('j'))    // summary -> c1
 	driveKey(a, runeKey('a')) // dirty
 
 	a.Update(runeKey(':'))
@@ -172,7 +177,7 @@ func TestAppForceQuitCommand(t *testing.T) {
 func TestAppUnknownCommand(t *testing.T) {
 	t.Parallel()
 	r := sampleReview()
-	a := NewApp(r, func(*model.Review) error { return nil })
+	a := NewApp(Config{Review: r, Saver: func(*model.Review) error { return nil }})
 
 	a.Update(runeKey(':'))
 	for _, c := range "bogus" {

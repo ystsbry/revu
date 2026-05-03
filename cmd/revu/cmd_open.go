@@ -1,6 +1,10 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+
 	"github.com/spf13/cobra"
 
 	"github.com/ystsbry/revu/internal/store"
@@ -8,13 +12,18 @@ import (
 )
 
 func newOpenCmd() *cobra.Command {
-	return &cobra.Command{
+	var repoRootFlag string
+	cmd := &cobra.Command{
 		Use:   "open [dir]",
 		Short: "Open a review directory in the TUI",
 		Long: `Open a review directory in the TUI.
 
 If [dir] is omitted, the latest pr-N directory under ~/.revu/{owner}/{repo}/
-is resolved from the current git remote.`,
+is resolved from the current git remote.
+
+By default, cwd's git remote must match the review's repo. Pass --repo-root
+to point at a clone elsewhere (or to bypass verification, e.g. for opening
+fixture review dirs that have no matching local clone).`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			arg := ""
@@ -29,7 +38,44 @@ is resolved from the current git remote.`,
 			if err != nil {
 				return err
 			}
-			return tui.Run(r, store.SaveStatuses)
+
+			repoRoot, err := resolveRepoRoot(repoRootFlag, r.PR.Repo)
+			if err != nil {
+				return err
+			}
+			return tui.Run(tui.Config{
+				Review:   r,
+				Saver:    store.SaveStatuses,
+				RepoRoot: repoRoot,
+			})
 		},
 	}
+	cmd.Flags().StringVar(&repoRootFlag, "repo-root", "",
+		"path to the local clone (skips cwd verification when set)")
+	return cmd
+}
+
+// resolveRepoRoot returns the absolute repo root to hand to the TUI.
+// When override is set, it must point to an existing directory; verification
+// against expectedSlug is skipped. Otherwise cwd is checked against the slug.
+func resolveRepoRoot(override, expectedSlug string) (string, error) {
+	if override != "" {
+		abs, err := filepath.Abs(override)
+		if err != nil {
+			return "", fmt.Errorf("resolve --repo-root: %w", err)
+		}
+		st, err := os.Stat(abs)
+		if err != nil {
+			return "", fmt.Errorf("--repo-root %s: %w", abs, err)
+		}
+		if !st.IsDir() {
+			return "", fmt.Errorf("--repo-root %s is not a directory", abs)
+		}
+		return abs, nil
+	}
+	root, err := store.VerifyRepoMatches(expectedSlug)
+	if err != nil {
+		return "", fmt.Errorf("revu open must run inside the matching repo (%s), or pass --repo-root: %w", expectedSlug, err)
+	}
+	return root, nil
 }

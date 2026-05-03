@@ -22,10 +22,16 @@ func sampleReview() *model.Review {
 	}
 }
 
+// pressJ moves the list cursor down one (summary -> first comment, etc.).
+func pressJ(l *List) {
+	l.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+}
+
 func TestListAcceptKeyMutates(t *testing.T) {
 	t.Parallel()
 	r := sampleReview()
 	l := NewList(r, keys.DefaultKeyMap())
+	pressJ(l) // land on c1
 
 	got, cmd := l.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	if got != l {
@@ -49,6 +55,7 @@ func TestListRejectAndPendingKeys(t *testing.T) {
 	t.Parallel()
 	r := sampleReview()
 	l := NewList(r, keys.DefaultKeyMap())
+	pressJ(l)
 
 	l.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	if r.Comments[0].Status != model.StatusRejected {
@@ -57,6 +64,90 @@ func TestListRejectAndPendingKeys(t *testing.T) {
 	l.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
 	if r.Comments[0].Status != model.StatusPending {
 		t.Errorf("after u: status = %s", r.Comments[0].Status)
+	}
+}
+
+func TestListSummarySelectedByDefault(t *testing.T) {
+	t.Parallel()
+	r := sampleReview()
+	l := NewList(r, keys.DefaultKeyMap())
+	if l.Cursor() != -1 {
+		t.Errorf("initial cursor = %d, want -1 (summary)", l.Cursor())
+	}
+}
+
+func TestListEnterOnSummaryEmitsSummaryMsg(t *testing.T) {
+	t.Parallel()
+	r := sampleReview()
+	r.SummaryBody = "# header\n\nbody"
+	l := NewList(r, keys.DefaultKeyMap())
+	_, cmd := l.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected GoToSummaryMsg cmd")
+	}
+	if _, ok := cmd().(GoToSummaryMsg); !ok {
+		t.Fatalf("got %T, want GoToSummaryMsg", cmd())
+	}
+}
+
+func TestListEnterOnCommentEmitsDetailMsg(t *testing.T) {
+	t.Parallel()
+	r := sampleReview()
+	l := NewList(r, keys.DefaultKeyMap())
+	pressJ(l) // cursor -> c1
+
+	_, cmd := l.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected GoToDetailMsg cmd")
+	}
+	dm, ok := cmd().(GoToDetailMsg)
+	if !ok {
+		t.Fatalf("got %T, want GoToDetailMsg", cmd())
+	}
+	if dm.Index != 0 {
+		t.Errorf("Index = %d, want 0", dm.Index)
+	}
+}
+
+func TestListNavigationWrapping(t *testing.T) {
+	t.Parallel()
+	r := sampleReview()
+	l := NewList(r, keys.DefaultKeyMap())
+
+	// Up from summary stays on summary.
+	l.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	if l.Cursor() != -1 {
+		t.Errorf("up from -1 = %d", l.Cursor())
+	}
+	// Down through all comments then clamps at last.
+	pressJ(l)
+	pressJ(l)
+	pressJ(l)
+	pressJ(l)
+	if l.Cursor() != 1 { // sampleReview has 2 comments
+		t.Errorf("down past end: cursor = %d, want 1", l.Cursor())
+	}
+	// Up from first comment returns to summary.
+	l.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	l.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	if l.Cursor() != -1 {
+		t.Errorf("up from c1 should return to summary, got %d", l.Cursor())
+	}
+}
+
+func TestListAcceptOnSummaryIsNoOp(t *testing.T) {
+	t.Parallel()
+	r := sampleReview()
+	l := NewList(r, keys.DefaultKeyMap())
+
+	_, cmd := l.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	for _, c := range r.Comments {
+		if c.Status != model.StatusPending {
+			t.Errorf("comment %s status changed: %s", c.ID, c.Status)
+		}
+	}
+	if cmd != nil {
+		t.Errorf("'a' on summary should not emit cmd, got %T", cmd())
 	}
 }
 
