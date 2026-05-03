@@ -63,7 +63,11 @@ func BuildPayload(r *model.Review) (Payload, FilteredCounts, error) {
 			if c.StartLine != nil {
 				v := *c.StartLine
 				pc.StartLine = &v
-				pc.StartSide = string(c.Side)
+				if c.StartSide != nil {
+					pc.StartSide = string(*c.StartSide)
+				} else {
+					pc.StartSide = string(c.Side)
+				}
 			}
 			out.Comments = append(out.Comments, pc)
 			counts.Accepted++

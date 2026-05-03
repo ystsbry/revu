@@ -133,8 +133,27 @@ func validateComment(c *model.Comment) error {
 	if c.BodyFile == "" {
 		return errors.New("body_file is required")
 	}
-	if c.StartLine != nil && *c.StartLine > c.Line {
-		return fmt.Errorf("start_line %d must be <= line %d", *c.StartLine, c.Line)
+	if c.StartSide != nil && c.StartLine == nil {
+		return errors.New("start_side requires start_line")
+	}
+	if c.StartLine != nil {
+		if *c.StartLine <= 0 {
+			return fmt.Errorf("start_line must be positive, got %d", *c.StartLine)
+		}
+		startSide := c.Side
+		if c.StartSide != nil {
+			if !c.StartSide.Valid() {
+				return fmt.Errorf("invalid start_side %q", *c.StartSide)
+			}
+			startSide = *c.StartSide
+		}
+		// Positional ordering only applies when both ends are on the same side.
+		// Cross-side ranges (e.g. start_side: LEFT, side: RIGHT) span the
+		// pre-image and post-image of the diff, so direct line comparison is
+		// not meaningful.
+		if startSide == c.Side && *c.StartLine > c.Line {
+			return fmt.Errorf("start_line %d must be <= line %d", *c.StartLine, c.Line)
+		}
 	}
 	return nil
 }

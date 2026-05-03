@@ -181,7 +181,7 @@ comments:
 - `comments[].status`: 必ず `pending`（ユーザーが TUI で取捨選択する）
 - `comments[].side`: 追加・変更行へのコメントは `RIGHT`、削除行は `LEFT`。基本は `RIGHT`
 - `comments[].path`: PR ベースリポジトリのルートからの相対パス
-- 複数行コメントは `start_line: <開始行>` を追加（同一 side 想定）
+- 複数行コメントは `start_line: <開始行>` を追加。同一 side のときは `start_side` を省略してよい（自動的に `side` と同じ扱い）。**削除行 (`-`) と追加行 (`+`) を跨いで範囲指定したいとき** は `start_side: LEFT` + `side: RIGHT` のように両方を明示する（同一 side では `start_line <= line` 制約あり、跨ぐ場合は制約なし）
 
 ### 10. review_event の判定
 

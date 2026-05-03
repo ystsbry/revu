@@ -98,6 +98,44 @@ func TestBuildPayloadJSONShape(t *testing.T) {
 	}
 }
 
+func TestBuildPayloadCrossSideRange(t *testing.T) {
+	t.Parallel()
+	startLine := 5
+	startSide := model.SideLeft
+	r := &model.Review{
+		SchemaVersion: 1,
+		PR:            model.PRMeta{Repo: "o/r", Number: 1, HeadSHA: "abc1234"},
+		ReviewEvent:   model.EventComment,
+		SummaryFile:   "summary.md",
+		SummaryBody:   "summary",
+		Comments: []model.Comment{
+			{
+				ID: "c1", Status: model.StatusAccepted,
+				Severity: model.SeverityMinor, Category: model.CategoryDesign,
+				Path: "a.go", Line: 12, Side: model.SideRight, Body: "spans removal+addition",
+				StartLine: &startLine, StartSide: &startSide,
+			},
+		},
+	}
+	p, _, err := BuildPayload(r)
+	if err != nil {
+		t.Fatalf("BuildPayload: %v", err)
+	}
+	if len(p.Comments) != 1 {
+		t.Fatalf("Comments len = %d, want 1", len(p.Comments))
+	}
+	pc := p.Comments[0]
+	if pc.StartLine == nil || *pc.StartLine != 5 {
+		t.Errorf("StartLine = %v, want 5", pc.StartLine)
+	}
+	if pc.StartSide != "LEFT" {
+		t.Errorf("StartSide = %q, want LEFT", pc.StartSide)
+	}
+	if pc.Side != "RIGHT" {
+		t.Errorf("Side = %q, want RIGHT", pc.Side)
+	}
+}
+
 func TestBuildPayloadValidation(t *testing.T) {
 	t.Parallel()
 	if _, _, err := BuildPayload(nil); err == nil {

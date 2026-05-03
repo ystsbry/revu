@@ -26,6 +26,7 @@ type Comment struct {
 	Line      int      `yaml:"line"`
 	Side      Side     `yaml:"side"`
 	StartLine *int     `yaml:"start_line,omitempty"`
+	StartSide *Side    `yaml:"start_side,omitempty"`
 	BodyFile  string   `yaml:"body_file"`
 
 	// Derived (not persisted in YAML).

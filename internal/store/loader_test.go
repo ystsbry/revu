@@ -191,3 +191,67 @@ func trunc(s string, n int) string {
 	}
 	return s[:n]
 }
+
+func TestValidateCommentRange(t *testing.T) {
+	t.Parallel()
+	base := func() model.Comment {
+		return model.Comment{
+			ID: "c1", Status: model.StatusPending,
+			Severity: model.SeverityMinor, Category: model.CategoryDesign,
+			Path: "a.go", Line: 10, Side: model.SideRight, BodyFile: "b.md",
+		}
+	}
+
+	t.Run("same-side range valid", func(t *testing.T) {
+		c := base()
+		s := 5
+		c.StartLine = &s
+		if err := validateComment(&c); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+	t.Run("same-side range with start>line rejected", func(t *testing.T) {
+		c := base()
+		s := 11
+		c.StartLine = &s
+		if err := validateComment(&c); err == nil {
+			t.Error("want error for start_line > line")
+		}
+	})
+	t.Run("cross-side range allows start_line>line", func(t *testing.T) {
+		c := base()
+		s := 99
+		left := model.SideLeft
+		c.StartLine = &s
+		c.StartSide = &left
+		if err := validateComment(&c); err != nil {
+			t.Errorf("cross-side should allow any line ordering: %v", err)
+		}
+	})
+	t.Run("start_side without start_line rejected", func(t *testing.T) {
+		c := base()
+		left := model.SideLeft
+		c.StartSide = &left
+		if err := validateComment(&c); err == nil {
+			t.Error("want error for start_side without start_line")
+		}
+	})
+	t.Run("invalid start_side rejected", func(t *testing.T) {
+		c := base()
+		s := 5
+		bad := model.Side("UP")
+		c.StartLine = &s
+		c.StartSide = &bad
+		if err := validateComment(&c); err == nil {
+			t.Error("want error for invalid start_side")
+		}
+	})
+	t.Run("non-positive start_line rejected", func(t *testing.T) {
+		c := base()
+		s := 0
+		c.StartLine = &s
+		if err := validateComment(&c); err == nil {
+			t.Error("want error for start_line <= 0")
+		}
+	})
+}
