@@ -1,0 +1,19 @@
+# Binaries
+/bin/
+/revu
+revu-*
+
+# Build artifacts
+*.test
+*.out
+coverage.txt
+dist/
+
+# OS / editor noise
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Local-only review data (revu writes under ~/.revu by default; this guards against accidental in-repo dirs)
+/.review/

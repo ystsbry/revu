@@ -1,0 +1,53 @@
+schema_version: 1
+
+pr:
+  repo: ystsbry/some-app
+  number: 1
+  head_sha: abc1234
+  base_branch: main
+
+generated_at: 2026-05-03T14:30:00+09:00
+generated_by:
+  tool: claude-code
+  skill: review-pr
+  model: claude-opus-4-7
+
+review_event: REQUEST_CHANGES
+summary_file: summary.md
+
+comments:
+  - id: c1
+    status: pending
+    severity: major
+    category: design
+    path: src/features/order/application.py
+    line: 42
+    side: RIGHT
+    body_file: comments/c1-application-42.md
+
+  - id: c2
+    status: pending
+    severity: nit
+    category: style
+    path: src/features/order/domain.py
+    line: 15
+    side: RIGHT
+    body_file: comments/c2-domain-15.md
+
+  - id: c3
+    status: accepted
+    severity: minor
+    category: perf
+    path: src/features/order/repository.py
+    line: 88
+    side: RIGHT
+    body_file: comments/c3-repository-88.md
+
+  - id: c4
+    status: rejected
+    severity: major
+    category: bug
+    path: src/features/order/handler.py
+    line: 23
+    side: RIGHT
+    body_file: comments/c4-handler-23.md
