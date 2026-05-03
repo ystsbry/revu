@@ -16,8 +16,26 @@ import (
 // marked with a ▶ in the gutter. If the file cannot be read, an error is
 // returned; the caller is expected to render a placeholder.
 func Code(path string, targetLine, ctx int) (string, error) {
-	if targetLine < 1 {
-		return "", fmt.Errorf("targetLine must be >= 1, got %d", targetLine)
+	return CodeRange(path, targetLine, targetLine, ctx)
+}
+
+// CodeRange returns a syntax-highlighted excerpt of the file at path covering
+// lines startLine..endLine with `ctx` lines of surrounding context. Lines
+// inside the range are marked in the gutter:
+//
+//   - single line (startLine == endLine): "▶ "
+//   - range start: "┌ ", middle: "│ ", end: "└ "
+//
+// If startLine > endLine the inputs are swapped. Both bounds must be >= 1.
+func CodeRange(path string, startLine, endLine, ctx int) (string, error) {
+	if startLine < 1 {
+		return "", fmt.Errorf("startLine must be >= 1, got %d", startLine)
+	}
+	if endLine < 1 {
+		return "", fmt.Errorf("endLine must be >= 1, got %d", endLine)
+	}
+	if startLine > endLine {
+		startLine, endLine = endLine, startLine
 	}
 	if ctx < 0 {
 		ctx = 0
@@ -51,27 +69,21 @@ func Code(path string, targetLine, ctx int) (string, error) {
 	tokens := it.Tokens()
 	lines := chroma.SplitTokensIntoLines(tokens)
 
-	start := targetLine - ctx
+	start := startLine - ctx
 	if start < 1 {
 		start = 1
 	}
-	end := targetLine + ctx
+	end := endLine + ctx
 	if end > len(lines) {
 		end = len(lines)
 	}
 	if start > len(lines) {
-		return "", fmt.Errorf("targetLine %d beyond file length %d", targetLine, len(lines))
+		return "", fmt.Errorf("startLine %d beyond file length %d", startLine, len(lines))
 	}
 
 	var out strings.Builder
 	for i := start; i <= end; i++ {
-		marker := "  "
-		if i == targetLine {
-			marker = "▶ "
-		}
-		fmt.Fprintf(&out, "%s%4d  ", marker, i)
-		// Strip trailing newline from line tokens to avoid stray blank rows
-		// before re-emitting our own \n.
+		fmt.Fprintf(&out, "%s%4d  ", rangeMarker(i, startLine, endLine), i)
 		stripped := stripTrailingNewline(lines[i-1])
 		if err := formatter.Format(&out, style, chroma.Literator(stripped...)); err != nil {
 			return "", err
@@ -79,6 +91,21 @@ func Code(path string, targetLine, ctx int) (string, error) {
 		out.WriteByte('\n')
 	}
 	return out.String(), nil
+}
+
+func rangeMarker(line, start, end int) string {
+	switch {
+	case line < start || line > end:
+		return "  "
+	case start == end:
+		return "▶ "
+	case line == start:
+		return "┌ "
+	case line == end:
+		return "└ "
+	default:
+		return "│ "
+	}
 }
 
 func stripTrailingNewline(line []chroma.Token) []chroma.Token {

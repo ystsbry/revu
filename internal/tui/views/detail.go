@@ -199,7 +199,21 @@ func (d *Detail) codeContent(c *model.Comment) (string, error) {
 		return "", errors.New("repo root not configured")
 	}
 	abs := filepath.Join(d.repoRoot, c.Path)
-	return render.Code(abs, c.Line, d.codeContextLines)
+	startLine, endLine := c.Line, c.Line
+	// A range only makes sense in the local working tree when both ends
+	// reference the post-image (RIGHT side). LEFT or cross-side ranges
+	// would point into the pre-image and don't align with current file
+	// line numbers, so we fall back to highlighting the end line.
+	if c.StartLine != nil && c.Side == model.SideRight {
+		startSide := c.Side
+		if c.StartSide != nil {
+			startSide = *c.StartSide
+		}
+		if startSide == model.SideRight {
+			startLine = *c.StartLine
+		}
+	}
+	return render.CodeRange(abs, startLine, endLine, d.codeContextLines)
 }
 
 func (d *Detail) current() *model.Comment {

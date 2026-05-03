@@ -83,6 +83,70 @@ func TestCodeContextClamped(t *testing.T) {
 	}
 }
 
+func TestCodeRangeMarkers(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "x.txt")
+	if err := os.WriteFile(path, []byte("a\nb\nc\nd\ne\nf\ng\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Range 3..6 with no context: lines 3,4,5,6 should carry ┌ │ │ └.
+	out, err := CodeRange(path, 3, 6, 0)
+	if err != nil {
+		t.Fatalf("CodeRange: %v", err)
+	}
+	for _, want := range []string{"┌    3  ", "│    4  ", "│    5  ", "└    6  "} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing gutter %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "▶") {
+		t.Errorf("range output must not use single-line marker ▶:\n%s", out)
+	}
+}
+
+func TestCodeRangeSwapped(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "x.txt")
+	if err := os.WriteFile(path, []byte("a\nb\nc\nd\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Caller passed end < start; should still render range 2..3.
+	out, err := CodeRange(path, 3, 2, 0)
+	if err != nil {
+		t.Fatalf("CodeRange: %v", err)
+	}
+	if !strings.Contains(out, "┌    2  ") || !strings.Contains(out, "└    3  ") {
+		t.Errorf("expected normalized 2..3 range:\n%s", out)
+	}
+}
+
+func TestCodeRangeSingleEqualsCode(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "x.txt")
+	if err := os.WriteFile(path, []byte("a\nb\nc\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// CodeRange with start==end should behave like Code (single ▶).
+	a, err := CodeRange(path, 2, 2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Code(path, 2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a != b {
+		t.Errorf("CodeRange(2,2) != Code(2):\n%q\nvs\n%q", a, b)
+	}
+	if !strings.Contains(a, "▶") {
+		t.Errorf("single-line should use ▶: %s", a)
+	}
+}
+
 func TestMarkdownBasic(t *testing.T) {
 	t.Parallel()
 	out, err := Markdown("# Hello\n\nworld\n", 40)
