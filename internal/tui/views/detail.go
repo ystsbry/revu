@@ -49,6 +49,10 @@ type Detail struct {
 
 	width  int
 	height int
+
+	// mdScroll is the line offset into the rendered markdown body for the
+	// current comment. Reset to 0 whenever the focused comment changes.
+	mdScroll int
 }
 
 // GoToListMsg requests the parent app to return to the list view.
@@ -87,6 +91,7 @@ func (d *Detail) Init() tea.Cmd { return nil }
 // detail view at a different position.
 func (d *Detail) SetIndex(i int) {
 	d.index = clampIndex(i, len(d.review.Comments))
+	d.mdScroll = 0
 }
 
 func (d *Detail) Index() int { return d.index }
@@ -97,11 +102,36 @@ func (d *Detail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		d.width = m.Width
 		d.height = m.Height
 	case tea.KeyMsg:
+		// Bare arrow / page keys scroll the markdown pane within the
+		// current comment. j/k/n/p still navigate between comments.
+		switch m.String() {
+		case "down":
+			d.mdScroll++
+			return d, nil
+		case "up":
+			if d.mdScroll > 0 {
+				d.mdScroll--
+			}
+			return d, nil
+		case "pgdown":
+			d.mdScroll += d.markdownContentHeight() / 2
+			return d, nil
+		case "pgup":
+			step := d.markdownContentHeight() / 2
+			if d.mdScroll < step {
+				d.mdScroll = 0
+			} else {
+				d.mdScroll -= step
+			}
+			return d, nil
+		}
 		switch {
 		case key.Matches(m, d.keys.Down), m.String() == "n":
 			d.index = clampIndex(d.index+1, len(d.review.Comments))
+			d.mdScroll = 0
 		case key.Matches(m, d.keys.Up), m.String() == "p":
 			d.index = clampIndex(d.index-1, len(d.review.Comments))
+			d.mdScroll = 0
 		case key.Matches(m, d.keys.Accept):
 			if c := d.current(); c != nil {
 				c.Status = model.StatusAccepted
@@ -165,7 +195,7 @@ func (d *Detail) headerView(c *model.Comment) string {
 
 func (d *Detail) footerView() string {
 	style := lipgloss.NewStyle().Faint(true).Padding(0, 1)
-	return style.Render("[a]ccept [r]eject [u]ndo  [n]ext [p]rev  [e]dit  [l]ist  [:]cmd  [q]uit")
+	return style.Render("[a]ccept [r]eject [u]ndo  [n]ext [p]rev  [↑↓]scroll  [e]dit  [l]ist  [:]cmd  [q]uit")
 }
 
 func (d *Detail) renderCodePane(c *model.Comment, height int) string {
@@ -190,13 +220,53 @@ func (d *Detail) renderMarkdownPane(c *model.Comment, height int) string {
 	if err != nil {
 		body = c.Body
 	}
+
+	// Slice the body by mdScroll so the user can pan through long
+	// comments with the arrow keys. We do the slicing here rather than
+	// rely on lipgloss truncation because lipgloss only ever clips from
+	// one end, which would leave the user unable to see content past the
+	// pane height.
+	contentHeight := height - 2 // top + bottom border
+	if contentHeight < 1 {
+		contentHeight = 1
+	}
+	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
+	maxScroll := len(lines) - contentHeight
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	scroll := d.mdScroll
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
+	end := scroll + contentHeight
+	if end > len(lines) {
+		end = len(lines)
+	}
+	visible := strings.Join(lines[scroll:end], "\n")
+
 	border := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(lipgloss.Color("240")).
 		Padding(0, 1).
 		Width(width - 2).
 		Height(height - 2)
-	return border.Render(body)
+	return border.Render(visible)
+}
+
+// markdownContentHeight is the number of body rows the markdown pane can
+// show, mirroring the height accounting in View() / renderMarkdownPane().
+// Used when pgup/pgdown need to scroll by half a page.
+func (d *Detail) markdownContentHeight() int {
+	bodyHeight := d.height - 2 // header + footer
+	if bodyHeight < 5 {
+		bodyHeight = 5
+	}
+	h := bodyHeight - 2 // pane border (top + bottom)
+	if h < 1 {
+		h = 1
+	}
+	return h
 }
 
 func (d *Detail) paneWidth() int {

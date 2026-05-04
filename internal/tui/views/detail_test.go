@@ -62,6 +62,44 @@ func TestDetailNavigateNext(t *testing.T) {
 	}
 }
 
+func TestDetailArrowKeysScrollMarkdown(t *testing.T) {
+	t.Parallel()
+	r, root := detailFixture(t)
+	d := NewDetail(r, root, keys.DefaultKeyMap(), 0, DetailSettings{})
+
+	// ↓ scrolls the markdown pane without advancing the comment index.
+	d.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if d.Index() != 0 {
+		t.Errorf("arrow down moved comment index to %d, want 0", d.Index())
+	}
+	if d.mdScroll != 1 {
+		t.Errorf("after ↓: mdScroll = %d, want 1", d.mdScroll)
+	}
+	d.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if d.mdScroll != 2 {
+		t.Errorf("after second ↓: mdScroll = %d, want 2", d.mdScroll)
+	}
+
+	// ↑ scrolls back, clamped at 0.
+	d.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if d.mdScroll != 1 {
+		t.Errorf("after ↑: mdScroll = %d, want 1", d.mdScroll)
+	}
+	d.Update(tea.KeyMsg{Type: tea.KeyUp})
+	d.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if d.mdScroll != 0 {
+		t.Errorf("clamped: mdScroll = %d, want 0", d.mdScroll)
+	}
+
+	// Switching comments resets scroll.
+	d.Update(tea.KeyMsg{Type: tea.KeyDown})
+	d.Update(tea.KeyMsg{Type: tea.KeyDown})
+	d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if d.mdScroll != 0 {
+		t.Errorf("after n: mdScroll = %d, want 0 (reset)", d.mdScroll)
+	}
+}
+
 func TestDetailAcceptMutates(t *testing.T) {
 	t.Parallel()
 	r, root := detailFixture(t)
