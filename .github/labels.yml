@@ -1,0 +1,73 @@
+# Label definitions for ystsbry/revu.
+# This file is the source of truth. Sync to GitHub via workflow on merge to main.
+# `good first issue` and `help wanted` are kept implicitly (GitHub treats them specially).
+
+# --- type: Conventional Commits の type に対応 ---
+- name: "type: feat"
+  color: "0e8a16"
+  description: 新機能
+- name: "type: fix"
+  color: "d73a4a"
+  description: バグ修正
+- name: "type: docs"
+  color: "0075ca"
+  description: ドキュメント
+- name: "type: refactor"
+  color: "5319e7"
+  description: リファクタリング
+- name: "type: build"
+  color: "e99695"
+  description: ビルド・依存関係
+- name: "type: ci"
+  color: "bfd4f2"
+  description: CI/CD 設定
+- name: "type: test"
+  color: "fbca04"
+  description: テスト
+- name: "type: chore"
+  color: "ededed"
+  description: その他雑務
+
+# --- scope: 主要モジュール ---
+- name: "scope: tui"
+  color: "1d76db"
+  description: TUI 関連
+- name: "scope: claude"
+  color: "8a63d2"
+  description: Claude 連携
+- name: "scope: skill"
+  color: "006b75"
+  description: skill 関連
+- name: "scope: cli"
+  color: "f9d0c4"
+  description: CLI 関連
+
+# --- status: PR / Issue の状態 ---
+- name: "status: in-progress"
+  color: "fbca04"
+  description: 作業中
+- name: "status: blocked"
+  color: "b60205"
+  description: ブロック中
+- name: "status: needs-review"
+  color: "0052cc"
+  description: レビュー待ち
+
+# --- priority: 優先度 ---
+- name: "priority: high"
+  color: "b60205"
+  description: 優先度高
+- name: "priority: medium"
+  color: "fbca04"
+  description: 優先度中
+- name: "priority: low"
+  color: "c2e0c6"
+  description: 優先度低
+
+# --- GitHub が UI 上で特別扱いするラベル（明示しないと sync で削除される） ---
+- name: "good first issue"
+  color: "7057ff"
+  description: Good for newcomers
+- name: "help wanted"
+  color: "008672"
+  description: Extra attention is needed

@@ -1,0 +1,60 @@
+name: Sync repo config
+
+# main へ push されたときに、.github/ 配下の設定ファイルを GitHub に反映する。
+# - .github/repo-settings.json -> PATCH /repos/{owner}/{repo}
+# - .github/labels.yml         -> /repos/{owner}/{repo}/labels （sync）
+# - .github/rulesets/*.json    -> /repos/{owner}/{repo}/rulesets （upsert）
+#
+# 必要なシークレット:
+#   REPO_ADMIN_TOKEN  ... administration:write 権限を持つ PAT もしくは GitHub App の token。
+#   GITHUB_TOKEN では repo settings / rulesets を変更できないため必須。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/repo-settings.json'
+      - '.github/labels.yml'
+      - '.github/rulesets/**'
+      - '.github/workflows/sync-repo-config.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply repository settings
+        env:
+          GH_TOKEN: ${{ secrets.REPO_ADMIN_TOKEN }}
+        run: |
+          gh api -X PATCH "repos/${{ github.repository }}" --input .github/repo-settings.json
+
+      - name: Sync labels
+        uses: EndBug/label-sync@v2
+        with:
+          config-file: .github/labels.yml
+          delete-other-labels: true
+
+      - name: Sync rulesets
+        env:
+          GH_TOKEN: ${{ secrets.REPO_ADMIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for file in .github/rulesets/*.json; do
+            name=$(jq -r .name "$file")
+            id=$(gh api "repos/${{ github.repository }}/rulesets" \
+              --jq ".[] | select(.name == \"$name\") | .id" || true)
+            if [ -z "$id" ]; then
+              echo "Creating ruleset: $name"
+              gh api -X POST "repos/${{ github.repository }}/rulesets" --input "$file"
+            else
+              echo "Updating ruleset: $name (id=$id)"
+              gh api -X PUT "repos/${{ github.repository }}/rulesets/$id" --input "$file"
+            fi
+          done
