@@ -87,15 +87,34 @@ func RunReviewPR(ctx context.Context, args ReviewArgs) (string, error) {
 	// `--print` mode, write/edit operations cannot prompt the user, so
 	// they are blocked by default. acceptEdits auto-approves them so the
 	// skill can write its review files to ~/.revu/.
+	//
+	// `--output-format stream-json --verbose` makes claude emit one JSON
+	// event per line as it runs (tool calls, assistant messages, the
+	// final result). We pipe that through relayProgress so the user sees
+	// what the skill is doing in real time instead of staring at a blank
+	// terminal until the review is fully written.
 	cmd := exec.CommandContext(ctx, bin,
 		"--add-dir", revuRoot,
 		"--permission-mode", "acceptEdits",
+		"--output-format", "stream-json",
+		"--verbose",
 		"--print", prompt,
 	)
 	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("claude --print %q: stdout pipe: %w", prompt, err)
+	}
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("claude --print %q: start: %w", prompt, err)
+	}
+	if err := relayProgress(stdout, os.Stdout); err != nil {
+		// Don't fail the whole run on a broken stream — wait for the
+		// process to exit and surface its real status.
+		fmt.Fprintf(os.Stderr, "claude stream relay: %v\n", err)
+	}
+	if err := cmd.Wait(); err != nil {
 		return "", fmt.Errorf("claude --print %q: %w", prompt, err)
 	}
 
