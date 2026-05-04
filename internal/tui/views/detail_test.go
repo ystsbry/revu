@@ -66,6 +66,9 @@ func TestDetailArrowKeysScrollMarkdown(t *testing.T) {
 	t.Parallel()
 	r, root := detailFixture(t)
 	d := NewDetail(r, root, keys.DefaultKeyMap(), 0, DetailSettings{})
+	// Pretend the rendered markdown overflows the pane so the scroll
+	// guard against past-the-bottom drift doesn't pin mdScroll at 0.
+	d.mdMaxScroll = 10
 
 	// ↓ scrolls the markdown pane without advancing the comment index.
 	d.Update(tea.KeyMsg{Type: tea.KeyDown})
@@ -91,12 +94,53 @@ func TestDetailArrowKeysScrollMarkdown(t *testing.T) {
 		t.Errorf("clamped: mdScroll = %d, want 0", d.mdScroll)
 	}
 
+	// Home jumps to the top, End to the bottom.
+	d.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	if d.mdScroll != d.mdMaxScroll {
+		t.Errorf("after End: mdScroll = %d, want %d", d.mdScroll, d.mdMaxScroll)
+	}
+	d.Update(tea.KeyMsg{Type: tea.KeyHome})
+	if d.mdScroll != 0 {
+		t.Errorf("after Home: mdScroll = %d, want 0", d.mdScroll)
+	}
+
+	// ↓ doesn't grow past mdMaxScroll.
+	for i := 0; i < d.mdMaxScroll+5; i++ {
+		d.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if d.mdScroll != d.mdMaxScroll {
+		t.Errorf("after overshoot: mdScroll = %d, want clamp at %d", d.mdScroll, d.mdMaxScroll)
+	}
+
 	// Switching comments resets scroll.
-	d.Update(tea.KeyMsg{Type: tea.KeyDown})
-	d.Update(tea.KeyMsg{Type: tea.KeyDown})
 	d.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
 	if d.mdScroll != 0 {
 		t.Errorf("after n: mdScroll = %d, want 0 (reset)", d.mdScroll)
+	}
+}
+
+func TestClipPaneHeight(t *testing.T) {
+	t.Parallel()
+	in := "a\nb\nc\nd\ne"
+	cases := []struct {
+		name   string
+		height int
+		want   string
+	}{
+		{"truncate", 3, "a\nb\nc"},
+		{"unchanged when under limit", 10, in},
+		{"exact fit", 5, in},
+		{"zero", 0, ""},
+		{"negative", -1, ""},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := clipPaneHeight(in, tc.height); got != tc.want {
+				t.Errorf("clipPaneHeight(%q, %d) = %q, want %q", in, tc.height, got, tc.want)
+			}
+		})
 	}
 }
 

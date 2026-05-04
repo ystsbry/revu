@@ -53,6 +53,10 @@ type Detail struct {
 	// mdScroll is the line offset into the rendered markdown body for the
 	// current comment. Reset to 0 whenever the focused comment changes.
 	mdScroll int
+	// mdMaxScroll is the clamp ceiling for mdScroll, refreshed by the
+	// last renderMarkdownPane call. Used so ↓ stops at the bottom and
+	// End jumps there in O(1) without re-rendering.
+	mdMaxScroll int
 }
 
 // GoToListMsg requests the parent app to return to the list view.
@@ -106,7 +110,9 @@ func (d *Detail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// current comment. j/k/n/p still navigate between comments.
 		switch m.String() {
 		case "down":
-			d.mdScroll++
+			if d.mdScroll < d.mdMaxScroll {
+				d.mdScroll++
+			}
 			return d, nil
 		case "up":
 			if d.mdScroll > 0 {
@@ -115,6 +121,9 @@ func (d *Detail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return d, nil
 		case "pgdown":
 			d.mdScroll += d.markdownContentHeight() / 2
+			if d.mdScroll > d.mdMaxScroll {
+				d.mdScroll = d.mdMaxScroll
+			}
 			return d, nil
 		case "pgup":
 			step := d.markdownContentHeight() / 2
@@ -123,6 +132,12 @@ func (d *Detail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				d.mdScroll -= step
 			}
+			return d, nil
+		case "home":
+			d.mdScroll = 0
+			return d, nil
+		case "end":
+			d.mdScroll = d.mdMaxScroll
 			return d, nil
 		}
 		switch {
@@ -195,7 +210,7 @@ func (d *Detail) headerView(c *model.Comment) string {
 
 func (d *Detail) footerView() string {
 	style := lipgloss.NewStyle().Faint(true).Padding(0, 1)
-	return style.Render("[a]ccept [r]eject [u]ndo  [n]ext [p]rev  [↑↓]scroll  [e]dit  [l]ist  [:]cmd  [q]uit")
+	return style.Render("[a]ccept [r]eject [u]ndo  [n]ext [p]rev  [↑↓/Home/End]scroll  [e]dit  [l]ist  [:]cmd  [q]uit")
 }
 
 func (d *Detail) renderCodePane(c *model.Comment, height int) string {
@@ -211,7 +226,7 @@ func (d *Detail) renderCodePane(c *model.Comment, height int) string {
 		Padding(0, 1).
 		Width(width - 2).
 		Height(height - 2)
-	return border.Render(body)
+	return clipPaneHeight(border.Render(body), height)
 }
 
 func (d *Detail) renderMarkdownPane(c *model.Comment, height int) string {
@@ -221,29 +236,43 @@ func (d *Detail) renderMarkdownPane(c *model.Comment, height int) string {
 		body = c.Body
 	}
 
-	// Slice the body by mdScroll so the user can pan through long
-	// comments with the arrow keys. We do the slicing here rather than
-	// rely on lipgloss truncation because lipgloss only ever clips from
-	// one end, which would leave the user unable to see content past the
-	// pane height.
 	contentHeight := height - 2 // top + bottom border
 	if contentHeight < 1 {
 		contentHeight = 1
 	}
-	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
+
+	// Pre-wrap the body to the inner content width that the bordered
+	// pane will give it. Glamour does its own word-wrap, but it leaves
+	// code-block lines untouched, so any unbreakable line longer than
+	// `contentWidth` would otherwise be re-wrapped by lipgloss inside
+	// `border.Render(...)` — inflating the visible line count past
+	// what mdScroll/contentHeight predict and hiding trailing content.
+	// Wrapping ourselves first means mdScroll units match real on-screen
+	// rows, so the user can scroll all the way to the bottom.
+	contentWidth := width - 4 // -2 border, -2 padding
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+	wrapped := lipgloss.NewStyle().Width(contentWidth).Render(body)
+	lines := strings.Split(strings.TrimRight(wrapped, "\n"), "\n")
 	maxScroll := len(lines) - contentHeight
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
-	scroll := d.mdScroll
-	if scroll > maxScroll {
-		scroll = maxScroll
+	// Cache for Update so ↓ / End can clamp without re-rendering markdown.
+	d.mdMaxScroll = maxScroll
+	// Also write back the clamped offset: prevents mdScroll from drifting
+	// past the bottom on rapid ↓ when content shrinks (smaller comment,
+	// resized terminal). Without this, a single ↑ might appear to do
+	// nothing because the internal counter has overshot.
+	if d.mdScroll > maxScroll {
+		d.mdScroll = maxScroll
 	}
-	end := scroll + contentHeight
+	end := d.mdScroll + contentHeight
 	if end > len(lines) {
 		end = len(lines)
 	}
-	visible := strings.Join(lines[scroll:end], "\n")
+	visible := strings.Join(lines[d.mdScroll:end], "\n")
 
 	border := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
@@ -251,7 +280,25 @@ func (d *Detail) renderMarkdownPane(c *model.Comment, height int) string {
 		Padding(0, 1).
 		Width(width - 2).
 		Height(height - 2)
-	return border.Render(visible)
+	return clipPaneHeight(border.Render(visible), height)
+}
+
+// clipPaneHeight enforces a hard upper bound on a rendered pane's line
+// count. lipgloss's `.Height()` only pads upward — when a content line is
+// wider than the box width (long code, unbreakable URLs, fullwidth chars
+// landing on an off-by-one cell), lipgloss wraps it into multiple lines
+// instead of truncating, and the pane silently grows past `height`. That
+// would push header/footer off the alt-screen, hiding the comment title.
+// Clipping here keeps the pane within the height the caller advertised.
+func clipPaneHeight(rendered string, height int) string {
+	if height <= 0 {
+		return ""
+	}
+	lines := strings.Split(rendered, "\n")
+	if len(lines) <= height {
+		return rendered
+	}
+	return strings.Join(lines[:height], "\n")
 }
 
 // markdownContentHeight is the number of body rows the markdown pane can
