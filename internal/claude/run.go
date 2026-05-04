@@ -78,7 +78,20 @@ func RunReviewPR(ctx context.Context, args ReviewArgs) (string, error) {
 		return "", fmt.Errorf("create %s: %w", revuRoot, err)
 	}
 
-	cmd := exec.CommandContext(ctx, bin, "--print", "--add-dir", revuRoot, prompt)
+	// Argument order matters: `--add-dir <directories...>` is variadic and
+	// will swallow the prompt if placed right before it. Put it before
+	// `--print` so the next `-` flag terminates the variadic capture and
+	// the prompt remains a clean trailing positional.
+	//
+	// `--permission-mode acceptEdits` is required: in non-interactive
+	// `--print` mode, write/edit operations cannot prompt the user, so
+	// they are blocked by default. acceptEdits auto-approves them so the
+	// skill can write its review files to ~/.revu/.
+	cmd := exec.CommandContext(ctx, bin,
+		"--add-dir", revuRoot,
+		"--permission-mode", "acceptEdits",
+		"--print", prompt,
+	)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
