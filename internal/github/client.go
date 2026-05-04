@@ -21,6 +21,20 @@ type Client interface {
 	PRHead(ctx context.Context, slug string, number int) (string, error)
 	PostReview(ctx context.Context, slug string, number int, p Payload) (int64, error)
 	ListReviewRequestedPRs(ctx context.Context) ([]PRListItem, error)
+	PRMeta(ctx context.Context, number int) (PRMeta, error)
+	PRDiff(ctx context.Context, number int) (string, error)
+}
+
+// PRMeta is the subset of gh pr view JSON the review-pr skill consumes.
+type PRMeta struct {
+	Number     int    `json:"number"`
+	HeadSha    string `json:"headRefOid"`
+	BaseBranch string `json:"baseRefName"`
+	Title      string `json:"title"`
+	Body       string `json:"body"`
+	BaseRepo   struct {
+		NameWithOwner string `json:"nameWithOwner"`
+	} `json:"baseRepository"`
 }
 
 // GhClient invokes the gh CLI as a subprocess.
@@ -77,6 +91,45 @@ func (c *GhClient) PRHead(ctx context.Context, slug string, number int) (string,
 		return "", errors.New("gh pr view returned empty headRefOid")
 	}
 	return resp.HeadRefOid, nil
+}
+
+// PRMeta returns the metadata fields the review-pr skill needs (head_sha,
+// base_branch, title, body, base repo slug) in one gh call. Defaults to
+// cwd's repo, same as `gh pr view <N>`.
+func (c *GhClient) PRMeta(ctx context.Context, number int) (PRMeta, error) {
+	cmd := exec.CommandContext(ctx, c.bin(),
+		"pr", "view", strconv.Itoa(number),
+		"--json", "number,headRefOid,baseRefName,title,body,baseRepository",
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return PRMeta{}, fmt.Errorf("gh pr view: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	var meta PRMeta
+	if err := json.Unmarshal(stdout.Bytes(), &meta); err != nil {
+		return PRMeta{}, fmt.Errorf("parse gh pr view output: %w", err)
+	}
+	if meta.BaseRepo.NameWithOwner == "" {
+		return PRMeta{}, errors.New("gh pr view returned empty baseRepository.nameWithOwner")
+	}
+	if meta.HeadSha == "" {
+		return PRMeta{}, errors.New("gh pr view returned empty headRefOid")
+	}
+	return meta, nil
+}
+
+// PRDiff returns the unified diff of the PR. Defaults to cwd's repo.
+func (c *GhClient) PRDiff(ctx context.Context, number int) (string, error) {
+	cmd := exec.CommandContext(ctx, c.bin(), "pr", "diff", strconv.Itoa(number))
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("gh pr diff: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.String(), nil
 }
 
 // PostReview submits the review to /repos/{slug}/pulls/{number}/reviews via
