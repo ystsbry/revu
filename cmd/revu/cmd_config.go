@@ -60,6 +60,11 @@ overwrite an existing file.`,
 			fmt.Fprintf(out, "ui.code_context_lines       %d\n", cfg.UI.CodeContextLines)
 			fmt.Fprintf(out, "ui.horizontal_threshold     %d\n", cfg.UI.HorizontalThreshold)
 			fmt.Fprintf(out, "review.default_event        %s\n", cfg.Review.DefaultEvent)
+			fmt.Fprintf(out, "review.severity (%d)\n", len(cfg.Review.Severities))
+			for _, s := range cfg.Review.Severities {
+				fmt.Fprintf(out, "  - %-12s level=%-4d event=%-15s color=%s\n",
+					s.Name, s.Level, s.ReviewEvent, s.Color)
+			}
 			return nil
 		},
 	}

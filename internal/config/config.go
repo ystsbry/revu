@@ -49,10 +49,49 @@ type ReviewConfig struct {
 	// that omit the field. Currently unused by revu itself (Claude Code
 	// skill writes review.yml), but reserved for future generators.
 	DefaultEvent string `toml:"default_event"`
+
+	// Severities defines the set of severities revu accepts in review.yml
+	// and exposes to the review-pr skill. When empty, revu falls back to
+	// the built-in 4 levels (critical / major / minor / nit). When the
+	// user provides one or more entries, the entire built-in list is
+	// replaced (no per-name merging).
+	Severities []SeverityDef `toml:"severity"`
+}
+
+// SeverityDef is one entry in the [[review.severity]] TOML array.
+//
+// Example:
+//
+//	[[review.severity]]
+//	name = "critical"
+//	level = 100
+//	description = "..."
+//	review_event = "REQUEST_CHANGES"
+//	color = "red"
+type SeverityDef struct {
+	// Name is the identifier written into review.yml comments[].severity.
+	// Must be non-empty and unique within the list.
+	Name string `toml:"name"`
+
+	// Level expresses relative importance. Higher = more severe. Used for
+	// sorting and (in the future) range filters like "severity:>=80".
+	Level int `toml:"level"`
+
+	// Description is shown to the skill/LLM and to humans browsing config.
+	Description string `toml:"description"`
+
+	// ReviewEvent is the GitHub review event a comment of this severity
+	// implies. Skill-side aggregation picks the strongest among comments.
+	// Empty defaults to "COMMENT".
+	ReviewEvent string `toml:"review_event"`
+
+	// Color is an optional hint for TUI styling. Empty = no color.
+	Color string `toml:"color"`
 }
 
 // Defaults returns the zero-config Config: empty editor.command (falls back
-// to $EDITOR), default code/horizontal_threshold values from the views.
+// to $EDITOR), default code/horizontal_threshold values from the views,
+// and the built-in severity set surfaced via Review.Severities.
 func Defaults() Config {
 	return Config{
 		UI: UIConfig{
@@ -61,8 +100,27 @@ func Defaults() Config {
 		},
 		Review: ReviewConfig{
 			DefaultEvent: string(model.EventComment),
+			Severities:   defaultSeverityDefs(),
 		},
 	}
+}
+
+// defaultSeverityDefs mirrors model.DefaultSeverityRegistry() but in
+// config-shape so the same values flow through `revu config` output and
+// `revu severities --json`.
+func defaultSeverityDefs() []SeverityDef {
+	infos := model.DefaultSeverityRegistry().All()
+	out := make([]SeverityDef, len(infos))
+	for i, s := range infos {
+		out[i] = SeverityDef{
+			Name:        s.Name,
+			Level:       s.Level,
+			Description: s.Description,
+			ReviewEvent: string(s.ReviewEvent),
+			Color:       s.Color,
+		}
+	}
+	return out
 }
 
 // Path returns the path that will be loaded by Load. Honors $REVU_CONFIG
@@ -123,7 +181,35 @@ func merge(base, over Config) (Config, error) {
 		}
 		out.Review.DefaultEvent = over.Review.DefaultEvent
 	}
+	if len(over.Review.Severities) > 0 {
+		// Validate by constructing a registry; replace the whole list.
+		if _, err := BuildSeverityRegistry(over.Review.Severities); err != nil {
+			return Config{}, fmt.Errorf("review.severity: %w", err)
+		}
+		out.Review.Severities = append([]SeverityDef(nil), over.Review.Severities...)
+	}
 	return out, nil
+}
+
+// BuildSeverityRegistry validates defs and constructs a model registry.
+// Used by both config.merge (for early validation) and the CLI bootstrap
+// (to install the runtime registry). When defs is empty, returns the
+// built-in default registry.
+func BuildSeverityRegistry(defs []SeverityDef) (*model.SeverityRegistry, error) {
+	if len(defs) == 0 {
+		return model.DefaultSeverityRegistry(), nil
+	}
+	infos := make([]model.SeverityInfo, len(defs))
+	for i, d := range defs {
+		infos[i] = model.SeverityInfo{
+			Name:        d.Name,
+			Level:       d.Level,
+			Description: d.Description,
+			ReviewEvent: model.ReviewEvent(d.ReviewEvent),
+			Color:       d.Color,
+		}
+	}
+	return model.NewSeverityRegistry(infos)
 }
 
 // SampleTOML returns a starter config the user can drop at Path().
@@ -144,4 +230,32 @@ horizontal_threshold = 100
 [review]
 # Default review_event for new reviews (currently informational).
 default_event = "COMMENT"
+
+# Severity definitions. When omitted, the built-in 4 levels are used
+# (critical / major / minor / nit). When you define one entry, the whole
+# list is replaced. "level" expresses relative importance (higher = more
+# severe). "review_event" is the GitHub review event a comment of this
+# severity implies; the review-pr skill picks the strongest event across
+# all comments (REQUEST_CHANGES > COMMENT > APPROVE).
+#
+# [[review.severity]]
+# name = "critical"
+# level = 100
+# description = "本番障害・データ破損・重大セキュリティに直結する"
+# review_event = "REQUEST_CHANGES"
+# color = "red"
+#
+# [[review.severity]]
+# name = "suggestion"
+# level = 40
+# description = "改善はするが優先度低、現状でも動く"
+# review_event = "COMMENT"
+# color = "cyan"
+#
+# [[review.severity]]
+# name = "nit"
+# level = 10
+# description = "趣味・スタイルの提案、無視されても困らない"
+# review_event = "COMMENT"
+# color = "gray"
 `

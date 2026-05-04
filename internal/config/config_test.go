@@ -133,3 +133,97 @@ func TestSampleTOMLParses(t *testing.T) {
 		t.Errorf("SampleTOML failed to parse: %v", err)
 	}
 }
+
+func TestDefaultsIncludesBuiltInSeverities(t *testing.T) {
+	t.Parallel()
+	c := Defaults()
+	names := make([]string, 0, len(c.Review.Severities))
+	for _, s := range c.Review.Severities {
+		names = append(names, s.Name)
+	}
+	want := []string{"critical", "major", "minor", "nit"}
+	if len(names) != len(want) {
+		t.Fatalf("default severities = %v, want %v", names, want)
+	}
+	for i, n := range want {
+		if names[i] != n {
+			t.Errorf("severities[%d] = %q, want %q", i, names[i], n)
+		}
+	}
+}
+
+func TestLoadCustomSeveritiesReplaces(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.toml")
+	content := `
+[[review.severity]]
+name = "critical"
+level = 100
+description = "critical"
+review_event = "REQUEST_CHANGES"
+color = "red"
+
+[[review.severity]]
+name = "suggestion"
+level = 40
+description = "suggestion"
+review_event = "COMMENT"
+color = "cyan"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("REVU_CONFIG", path)
+
+	cfg, _, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := len(cfg.Review.Severities); got != 2 {
+		t.Fatalf("severities len = %d, want 2 (built-ins must be replaced, not merged)", got)
+	}
+	if cfg.Review.Severities[1].Name != "suggestion" {
+		t.Errorf("severities[1].Name = %q, want suggestion", cfg.Review.Severities[1].Name)
+	}
+}
+
+func TestLoadInvalidSeverityReviewEvent(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.toml")
+	if err := os.WriteFile(path, []byte(`[[review.severity]]
+name = "bad"
+level = 1
+review_event = "BOGUS"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("REVU_CONFIG", path)
+
+	_, _, _, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "review_event") {
+		t.Errorf("err = %v, want review_event error", err)
+	}
+}
+
+func TestLoadDuplicateSeverityName(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.toml")
+	if err := os.WriteFile(path, []byte(`[[review.severity]]
+name = "x"
+level = 1
+review_event = "COMMENT"
+
+[[review.severity]]
+name = "x"
+level = 2
+review_event = "COMMENT"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("REVU_CONFIG", path)
+
+	_, _, _, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "duplicated") {
+		t.Errorf("err = %v, want duplicate error", err)
+	}
+}

@@ -5,6 +5,9 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/ystsbry/revu/internal/config"
+	"github.com/ystsbry/revu/internal/model"
 )
 
 var (
@@ -26,6 +29,9 @@ func newRootCmd() *cobra.Command {
 		Short:         "Review viewer & GitHub submission agent for Claude Code generated reviews",
 		SilenceUsage:  true,
 		SilenceErrors: false,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			return installSeverityRegistry()
+		},
 	}
 	cmd.AddCommand(newVersionCmd())
 	cmd.AddCommand(newValidateCmd())
@@ -34,7 +40,25 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newExportCmd())
 	cmd.AddCommand(newSubmitCmd())
 	cmd.AddCommand(newConfigCmd())
+	cmd.AddCommand(newSeveritiesCmd())
 	return cmd
+}
+
+// installSeverityRegistry loads config (if present) and installs the
+// severity registry so subsequent store/filter validation accepts user-
+// configured names. A missing config file is fine; a malformed one or
+// invalid [[review.severity]] entries abort the command.
+func installSeverityRegistry() error {
+	cfg, _, _, err := config.Load()
+	if err != nil {
+		return err
+	}
+	reg, err := config.BuildSeverityRegistry(cfg.Review.Severities)
+	if err != nil {
+		return err
+	}
+	model.SetActiveSeverityRegistry(reg)
+	return nil
 }
 
 func newVersionCmd() *cobra.Command {

@@ -38,6 +38,10 @@ func (s *Status) UnmarshalYAML(node *yaml.Node) error {
 
 type Severity string
 
+// Built-in severity names. Kept as named constants so existing tests and
+// internal references don't have to spell the string literally. The actual
+// set of valid severities at runtime is decided by the active SeverityRegistry
+// (see registry.go), which is configured from ~/.config/revu/config.toml.
 const (
 	SeverityNit      Severity = "nit"
 	SeverityMinor    Severity = "minor"
@@ -45,12 +49,9 @@ const (
 	SeverityCritical Severity = "critical"
 )
 
+// Valid reports whether s is a registered severity in the active registry.
 func (s Severity) Valid() bool {
-	switch s {
-	case SeverityNit, SeverityMinor, SeverityMajor, SeverityCritical:
-		return true
-	}
-	return false
+	return ActiveSeverityRegistry().Has(string(s))
 }
 
 func (s *Severity) UnmarshalYAML(node *yaml.Node) error {

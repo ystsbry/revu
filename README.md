@@ -86,6 +86,7 @@ cp ~/.claude/skills/review-pr/templates/summary.md.tmpl ~/.config/revu/templates
 | `revu submit --dry-run [dir]` | 投稿内容のプレビュー（API は呼ばない） |
 | `revu config` | 現在の設定を表示 |
 | `revu config --init` | スターター `config.toml` を書き出す |
+| `revu severities` | 有効な severity 一覧を表示（`--json` で機械可読出力、skill が利用） |
 
 `[dir]` を省略すると、cwd の git remote から `~/.revu/{owner}/{repo}/` 配下の最新 `pr-N` を解決します。
 
@@ -176,9 +177,45 @@ horizontal_threshold = 100
 [review]
 # 新規レビューの review_event 既定値（情報用、現状未使用）
 default_event = "COMMENT"
+
+# severity 定義。省略時は組み込みの 4 段階 (critical / major / minor / nit)。
+# 1 件でも定義すると組み込みは破棄され、ここに書いた集合だけが有効になる。
+# review-pr skill は `revu severities --json` でこの定義を読み取って
+# コメント生成と review_event 判定に使う。
+#
+# [[review.severity]]
+# name = "critical"
+# level = 100                       # 大きいほど重大
+# description = "本番障害・データ破損・重大セキュリティに直結する"
+# review_event = "REQUEST_CHANGES"  # APPROVE / COMMENT / REQUEST_CHANGES
+# color = "red"
+#
+# [[review.severity]]
+# name = "suggestion"
+# level = 40
+# description = "改善はするが優先度低、現状でも動く"
+# review_event = "COMMENT"
+# color = "cyan"
+#
+# [[review.severity]]
+# name = "nit"
+# level = 10
+# description = "趣味・スタイルの提案、無視されても困らない"
+# review_event = "COMMENT"
+# color = "gray"
 ```
 
 `revu config --init` で雛形を書き出せます。
+
+### severity と review_event の対応
+
+各 severity に紐づく `review_event`（`REQUEST_CHANGES` / `COMMENT` / `APPROVE`）が、コメント全体から計算される PR レビューの `review_event` を決めます。skill 側のルール:
+
+1. 各コメントの severity に紐づく `review_event` を集める
+2. 一番強いものを採用 — 優先度は `REQUEST_CHANGES` > `COMMENT` > `APPROVE`
+3. コメントが 0 件のときは `APPROVE`
+
+例えば `kudos` のような「良かった点」用の severity を `review_event = "APPROVE"` で定義しておけば、その severity だけのコメントは `APPROVE` のままレビューを下げません。
 
 ## 投稿フローの安全装置
 
