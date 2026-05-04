@@ -5,9 +5,10 @@ import "context"
 // FakeClient is a Client implementation that lets tests stub each method.
 // Set the relevant Func field; unset fields return zero values / nil.
 type FakeClient struct {
-	AuthStatusFunc func(ctx context.Context) error
-	PRHeadFunc     func(ctx context.Context, slug string, number int) (string, error)
-	PostReviewFunc func(ctx context.Context, slug string, number int, p Payload) (int64, error)
+	AuthStatusFunc             func(ctx context.Context) error
+	PRHeadFunc                 func(ctx context.Context, slug string, number int) (string, error)
+	PostReviewFunc             func(ctx context.Context, slug string, number int, p Payload) (int64, error)
+	ListReviewRequestedPRsFunc func(ctx context.Context) ([]PRListItem, error)
 }
 
 func (f *FakeClient) AuthStatus(ctx context.Context) error {
@@ -29,4 +30,11 @@ func (f *FakeClient) PostReview(ctx context.Context, slug string, number int, p 
 		return f.PostReviewFunc(ctx, slug, number, p)
 	}
 	return 0, nil
+}
+
+func (f *FakeClient) ListReviewRequestedPRs(ctx context.Context) ([]PRListItem, error) {
+	if f.ListReviewRequestedPRsFunc != nil {
+		return f.ListReviewRequestedPRsFunc(ctx)
+	}
+	return nil, nil
 }

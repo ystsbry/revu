@@ -20,6 +20,7 @@ type Client interface {
 	AuthStatus(ctx context.Context) error
 	PRHead(ctx context.Context, slug string, number int) (string, error)
 	PostReview(ctx context.Context, slug string, number int, p Payload) (int64, error)
+	ListReviewRequestedPRs(ctx context.Context) ([]PRListItem, error)
 }
 
 // GhClient invokes the gh CLI as a subprocess.

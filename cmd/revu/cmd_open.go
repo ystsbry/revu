@@ -36,35 +36,41 @@ fixture review dirs that have no matching local clone).`,
 			if err != nil {
 				return err
 			}
-			r, err := store.Load(dir)
-			if err != nil {
-				return err
-			}
-
-			repoRoot, err := resolveRepoRoot(repoRootFlag, r.PR.Repo)
-			if err != nil {
-				return err
-			}
-			cfg, _, _, cfgErr := config.Load()
-			if cfgErr != nil {
-				return fmt.Errorf("load config: %w", cfgErr)
-			}
-			return tui.Run(tui.Config{
-				Review:   r,
-				Saver:    store.SaveStatuses,
-				Reloader: reloadSubmissionMeta,
-				RepoRoot: repoRoot,
-				Settings: tui.Settings{
-					EditorCommand:       cfg.Editor.Command,
-					CodeContextLines:    cfg.UI.CodeContextLines,
-					HorizontalThreshold: cfg.UI.HorizontalThreshold,
-				},
-			})
+			return openReviewDir(dir, repoRootFlag)
 		},
 	}
 	cmd.Flags().StringVar(&repoRootFlag, "repo-root", "",
 		"path to the local clone (skips cwd verification when set)")
 	return cmd
+}
+
+// openReviewDir loads the review at dir and launches the TUI on it.
+// repoRootOverride is the optional --repo-root flag value; empty means
+// "verify cwd matches the review's repo".
+func openReviewDir(dir, repoRootOverride string) error {
+	r, err := store.Load(dir)
+	if err != nil {
+		return err
+	}
+	repoRoot, err := resolveRepoRoot(repoRootOverride, r.PR.Repo)
+	if err != nil {
+		return err
+	}
+	cfg, _, _, cfgErr := config.Load()
+	if cfgErr != nil {
+		return fmt.Errorf("load config: %w", cfgErr)
+	}
+	return tui.Run(tui.Config{
+		Review:   r,
+		Saver:    store.SaveStatuses,
+		Reloader: reloadSubmissionMeta,
+		RepoRoot: repoRoot,
+		Settings: tui.Settings{
+			EditorCommand:       cfg.Editor.Command,
+			CodeContextLines:    cfg.UI.CodeContextLines,
+			HorizontalThreshold: cfg.UI.HorizontalThreshold,
+		},
+	})
 }
 
 // reloadSubmissionMeta re-reads review.yml and copies SubmittedAt/ReviewID

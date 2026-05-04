@@ -12,10 +12,13 @@ Claude Code が生成した PR レビューを TUI で確認・編集し、GitHu
 
 ```
 [1] Claude Code で /review-pr <PR_NUMBER> を実行
+        または
+    revu review [PR_NUMBER]   ← cwd リポジトリで自分にレビュー依頼が来ている PR
+                                を選び、内部で claude CLI を起動してレビュー生成
         ↓
 [2] ~/.revu/{owner}/{repo}/pr-{N}/ に review.yml + summary.md + comments/*.md が出力される
         ↓
-[3] revu open で TUI を起動
+[3] revu open で TUI を起動（revu review 経由なら自動で開く）
         ↓
 [4] 一覧 / 詳細 / サマリ画面でコメントを accept / reject / edit
         ↓
@@ -77,6 +80,7 @@ cp ~/.claude/skills/review-pr/templates/summary.md.tmpl ~/.config/revu/templates
 | コマンド | 用途 |
 |---|---|
 | `revu version` | バージョン表示 |
+| `revu review [PR_NUMBER]` | 自分にレビュー依頼が来ている PR を選び、`claude` CLI で `/review-pr` を実行して生成された結果を TUI で開く |
 | `revu validate [dir]` | review.yml と Markdown の整合性チェック |
 | `revu status [dir]` | accept/reject の集計、submit 状況を表示 |
 | `revu open [dir]` | TUI を起動（cwd の git remote が review.PR.Repo と一致する必要あり） |
