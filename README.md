@@ -34,6 +34,29 @@ make build
 
 `go install ./cmd/revu` でも `$GOPATH/bin` に配置できます。
 
+## インストール
+
+ソースから build したバイナリを `/usr/local/bin` に置く場合:
+
+```bash
+sudo make install
+```
+
+sudo を避けたいときは `PREFIX` で配置先を変更:
+
+```bash
+make install PREFIX=$HOME/.local       # → ~/.local/bin/revu
+```
+
+アンインストールは:
+
+```bash
+sudo make uninstall                     # /usr/local/bin から
+make uninstall PREFIX=$HOME/.local      # 別 PREFIX で入れた場合
+```
+
+リリース版の prebuilt バイナリを使いたい場合は `install.sh` を参照してください。
+
 ## 必要なもの
 
 - Go 1.23 以上
