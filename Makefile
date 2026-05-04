@@ -3,6 +3,11 @@
 BIN := bin/revu
 PKG := ./cmd/revu
 
+# revu は cgo を使わないので、ARM ホスト上で QEMU 経由の amd64 Go を
+# 動かしたときに gcc -m64 で落ちるのを避けるため既定で無効化する。
+# 必要なら `make build CGO_ENABLED=1` で上書き可能。
+export CGO_ENABLED ?= 0
+
 # Override with `make install PREFIX=$HOME/.local` to avoid sudo, or
 # `make install DESTDIR=/tmp/staging PREFIX=/usr/local` for packaging.
 PREFIX ?= /usr/local
