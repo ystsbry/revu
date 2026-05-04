@@ -1,4 +1,4 @@
-.PHONY: build test run tidy fmt vet clean install uninstall
+.PHONY: build test run tidy fmt vet clean install uninstall install-skills uninstall-skills
 
 BIN := bin/revu
 PKG := ./cmd/revu
@@ -7,6 +7,10 @@ PKG := ./cmd/revu
 # `make install DESTDIR=/tmp/staging PREFIX=/usr/local` for packaging.
 PREFIX ?= /usr/local
 INSTALL_DIR := $(DESTDIR)$(PREFIX)/bin
+
+# Override with `make install-skills CLAUDE_SKILLS_DIR=/path/to/skills`.
+CLAUDE_SKILLS_DIR ?= $(HOME)/.claude/skills
+SKILLS_SRC := $(CURDIR)/skills
 
 build:
 	@mkdir -p bin
@@ -38,3 +42,28 @@ install: build
 uninstall:
 	rm -f $(INSTALL_DIR)/revu
 	@echo "Removed $(INSTALL_DIR)/revu"
+
+install-skills:
+	@mkdir -p $(CLAUDE_SKILLS_DIR)
+	@for src in $(SKILLS_SRC)/*/; do \
+		name=$$(basename $$src); \
+		target=$(CLAUDE_SKILLS_DIR)/$$name; \
+		if [ -L $$target ]; then \
+			rm -f $$target; \
+		elif [ -e $$target ]; then \
+			echo "skip: $$target already exists (not a symlink)"; \
+			continue; \
+		fi; \
+		ln -s $$src $$target; \
+		echo "Linked $$target -> $$src"; \
+	done
+
+uninstall-skills:
+	@for src in $(SKILLS_SRC)/*/; do \
+		name=$$(basename $$src); \
+		target=$(CLAUDE_SKILLS_DIR)/$$name; \
+		if [ -L $$target ]; then \
+			rm -f $$target; \
+			echo "Removed $$target"; \
+		fi; \
+	done
