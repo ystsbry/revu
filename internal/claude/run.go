@@ -66,7 +66,19 @@ func RunReviewPR(ctx context.Context, args ReviewArgs) (string, error) {
 		prompt += " --focus " + args.Focus
 	}
 
-	cmd := exec.CommandContext(ctx, bin, "--print", prompt)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("locate home dir: %w", err)
+	}
+	// Ensure ~/.revu exists before passing it to `claude --add-dir`: the
+	// flag grants sandbox/tool access to that directory, and claude rejects
+	// non-existent paths. The skill writes its output under it.
+	revuRoot := filepath.Join(home, ".revu")
+	if err := os.MkdirAll(revuRoot, 0o755); err != nil {
+		return "", fmt.Errorf("create %s: %w", revuRoot, err)
+	}
+
+	cmd := exec.CommandContext(ctx, bin, "--print", "--add-dir", revuRoot, prompt)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -74,11 +86,7 @@ func RunReviewPR(ctx context.Context, args ReviewArgs) (string, error) {
 		return "", fmt.Errorf("claude --print %q: %w", prompt, err)
 	}
 
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("locate home dir: %w", err)
-	}
-	out := filepath.Join(home, ".revu", args.OwnerRepo, "pr-"+strconv.Itoa(args.PRNumber))
+	out := filepath.Join(revuRoot, args.OwnerRepo, "pr-"+strconv.Itoa(args.PRNumber))
 	if _, err := os.Stat(out); err != nil {
 		return "", fmt.Errorf("expected review at %s but it was not created (claude may have failed silently): %w", out, err)
 	}
