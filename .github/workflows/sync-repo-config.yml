@@ -2,8 +2,9 @@ name: Sync repo config
 
 # main へ push されたときに、.github/ 配下の設定ファイルを GitHub に反映する。
 # - .github/repo-settings.json -> PATCH /repos/{owner}/{repo}
-# - .github/labels.yml         -> /repos/{owner}/{repo}/labels （sync）
-# - .github/rulesets/*.json    -> /repos/{owner}/{repo}/rulesets （upsert）
+# - .github/labels.yml         -> /repos/{owner}/{repo}/labels （authoritative sync）
+# - .github/rulesets/*.json    -> /repos/{owner}/{repo}/rulesets （authoritative sync）
+#   ※ ローカルにファイルが無い ruleset は GitHub 側からも削除される
 #
 # 必要なシークレット:
 #   REPO_ADMIN_TOKEN  ... administration:write 権限を持つ PAT もしくは GitHub App の token。
@@ -44,18 +45,41 @@ jobs:
       - name: Sync rulesets
         env:
           GH_TOKEN: ${{ secrets.REPO_ADMIN_TOKEN }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           shopt -s nullglob
+
+          # 1) Upsert: ローカルファイル -> GitHub に作成 or 更新
           for file in .github/rulesets/*.json; do
             name=$(jq -r .name "$file")
-            id=$(gh api "repos/${{ github.repository }}/rulesets" \
+            id=$(gh api "repos/${REPO}/rulesets" \
               --jq ".[] | select(.name == \"$name\") | .id" || true)
             if [ -z "$id" ]; then
               echo "Creating ruleset: $name"
-              gh api -X POST "repos/${{ github.repository }}/rulesets" --input "$file"
+              gh api -X POST "repos/${REPO}/rulesets" --input "$file"
             else
               echo "Updating ruleset: $name (id=$id)"
-              gh api -X PUT "repos/${{ github.repository }}/rulesets/$id" --input "$file"
+              gh api -X PUT "repos/${REPO}/rulesets/$id" --input "$file"
             fi
           done
+
+          # 2) Delete: ローカルに対応ファイルが無い ruleset を GitHub から削除
+          local_names=()
+          for f in .github/rulesets/*.json; do
+            local_names+=("$(jq -r '.name' "$f")")
+          done
+
+          while IFS=$'\t' read -r id name; do
+            managed=false
+            for n in "${local_names[@]+"${local_names[@]}"}"; do
+              if [ "$n" = "$name" ]; then
+                managed=true
+                break
+              fi
+            done
+            if [ "$managed" = "false" ]; then
+              echo "Deleting ruleset: $name (id=$id)"
+              gh api -X DELETE "repos/${REPO}/rulesets/$id"
+            fi
+          done < <(gh api "repos/${REPO}/rulesets" --jq '.[] | "\(.id)\t\(.name)"')
