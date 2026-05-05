@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -82,14 +83,24 @@ func TestRepoDirAndPRDir(t *testing.T) {
 
 func TestLatestPRDir(t *testing.T) {
 	dir := t.TempDir()
+	mkReviewed := func(name string) {
+		p := filepath.Join(dir, name)
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(p, "review.yml"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	mkdir := func(name string) {
 		if err := os.MkdirAll(filepath.Join(dir, name), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	mkdir("pr-1")
-	mkdir("pr-7")
-	mkdir("pr-42")
+	mkReviewed("pr-1")
+	mkReviewed("pr-7")
+	mkReviewed("pr-42")
+	mkdir("pr-99") // higher number but no review.yml; must be skipped
 	mkdir("pr-not-a-number")
 	mkdir("notes")
 
@@ -107,6 +118,52 @@ func TestLatestPRDirEmpty(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := LatestPRDir(dir); err == nil {
 		t.Fatalf("expected error for empty dir")
+	}
+}
+
+func TestLatestPRDirSkipsUnreviewed(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "pr-8"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LatestPRDir(dir); err == nil {
+		t.Fatalf("expected error when only unreviewed pr-* dirs exist")
+	}
+}
+
+func TestListReviewedPRDirs(t *testing.T) {
+	dir := t.TempDir()
+	mkReviewed := func(name string) {
+		p := filepath.Join(dir, name)
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(p, "review.yml"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mkReviewed("pr-3")
+	mkReviewed("pr-12")
+	mkReviewed("pr-7")
+	if err := os.MkdirAll(filepath.Join(dir, "pr-99"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ListReviewedPRDirs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("len=%d want 3 (got %v)", len(got), got)
+	}
+	want := []int{12, 7, 3}
+	for i, w := range want {
+		if got[i].Number != w {
+			t.Fatalf("got[%d].Number=%d want %d", i, got[i].Number, w)
+		}
+		if got[i].Path != filepath.Join(dir, fmt.Sprintf("pr-%d", w)) {
+			t.Fatalf("got[%d].Path=%q", i, got[i].Path)
+		}
 	}
 }
 

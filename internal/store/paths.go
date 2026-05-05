@@ -87,18 +87,22 @@ func CurrentRepoSlug() (string, error) {
 	return ParseRemoteURL(string(out))
 }
 
-// LatestPRDir returns the most recently modified pr-N directory under repoDir,
-// where N is the largest number when multiple are tied on mtime.
-func LatestPRDir(repoDir string) (string, error) {
+// ReviewedPRDir is one entry returned by ListReviewedPRDirs.
+type ReviewedPRDir struct {
+	Number int    // pr number
+	Path   string // absolute path to the pr-N directory
+}
+
+// ListReviewedPRDirs returns every pr-N directory under repoDir that contains a
+// review.yml, sorted by N descending. Directories created by other tooling
+// (e.g. an empty pr-N from an in-flight review run) are skipped so callers
+// only see PRs that actually have a review to load.
+func ListReviewedPRDirs(repoDir string) ([]ReviewedPRDir, error) {
 	entries, err := os.ReadDir(repoDir)
 	if err != nil {
-		return "", fmt.Errorf("read repo dir: %w", err)
+		return nil, fmt.Errorf("read repo dir: %w", err)
 	}
-	type cand struct {
-		name string
-		num  int
-	}
-	var cands []cand
+	var out []ReviewedPRDir
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -111,22 +115,37 @@ func LatestPRDir(repoDir string) (string, error) {
 		if err != nil || n <= 0 {
 			continue
 		}
-		cands = append(cands, cand{name: name, num: n})
+		path := filepath.Join(repoDir, name)
+		if _, err := os.Stat(filepath.Join(path, "review.yml")); err != nil {
+			continue
+		}
+		out = append(out, ReviewedPRDir{Number: n, Path: path})
 	}
-	if len(cands) == 0 {
-		return "", fmt.Errorf("no pr-* directories under %s", repoDir)
-	}
-	sort.Slice(cands, func(i, j int) bool {
-		return cands[i].num > cands[j].num
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Number > out[j].Number
 	})
-	return filepath.Join(repoDir, cands[0].name), nil
+	return out, nil
+}
+
+// LatestPRDir returns the pr-N directory with the largest N that contains a
+// review.yml.
+func LatestPRDir(repoDir string) (string, error) {
+	dirs, err := ListReviewedPRDirs(repoDir)
+	if err != nil {
+		return "", err
+	}
+	if len(dirs) == 0 {
+		return "", fmt.Errorf("no reviewed pr-* directories under %s (no review.yml found)", repoDir)
+	}
+	return dirs[0].Path, nil
 }
 
 // ResolveReviewDir is the entry point used by `revu open [arg]`.
 //
 // If arg is non-empty, it is treated as a filesystem path (absolute or relative
 // to cwd). Otherwise, the current repository's git origin is read and the
-// latest pr-* directory under ~/.revu/{owner}/{repo}/ is returned.
+// latest reviewed pr-* directory (one that contains review.yml) under
+// ~/.revu/{owner}/{repo}/ is returned.
 func ResolveReviewDir(arg string) (string, error) {
 	if arg != "" {
 		abs, err := filepath.Abs(arg)

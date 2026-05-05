@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/ystsbry/revu/internal/model"
 	"github.com/ystsbry/revu/internal/store"
 	"github.com/ystsbry/revu/internal/tui"
+	"github.com/ystsbry/revu/internal/tui/picker"
 )
 
 func newOpenCmd() *cobra.Command {
@@ -20,21 +22,29 @@ func newOpenCmd() *cobra.Command {
 		Short: "Open a review directory in the TUI",
 		Long: `Open a review directory in the TUI.
 
-If [dir] is omitted, the latest pr-N directory under ~/.revu/{owner}/{repo}/
-is resolved from the current git remote.
+If [dir] is omitted, the reviewed pr-N directories under
+~/.revu/{owner}/{repo}/ (those that contain a review.yml) are listed in a
+picker so you can choose which one to open. The repo is derived from the
+current git remote.
 
 By default, cwd's git remote must match the review's repo. Pass --repo-root
 to point at a clone elsewhere (or to bypass verification, e.g. for opening
 fixture review dirs that have no matching local clone).`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			arg := ""
 			if len(args) == 1 {
-				arg = args[0]
+				dir, err := store.ResolveReviewDir(args[0])
+				if err != nil {
+					return err
+				}
+				return openReviewDir(dir, repoRootFlag)
 			}
-			dir, err := store.ResolveReviewDir(arg)
+			dir, err := pickReviewedPRDir(cmd)
 			if err != nil {
 				return err
+			}
+			if dir == "" {
+				return nil // user cancelled
 			}
 			return openReviewDir(dir, repoRootFlag)
 		},
@@ -42,6 +52,48 @@ fixture review dirs that have no matching local clone).`,
 	cmd.Flags().StringVar(&repoRootFlag, "repo-root", "",
 		"path to the local clone (skips cwd verification when set)")
 	return cmd
+}
+
+// pickReviewedPRDir lists reviewed pr-* dirs for the cwd's repo and runs the
+// picker. Returns "" when the user cancels.
+func pickReviewedPRDir(cmd *cobra.Command) (string, error) {
+	slug, err := store.CurrentRepoSlug()
+	if err != nil {
+		return "", fmt.Errorf("auto-resolve review dir: %w", err)
+	}
+	repoDir, err := store.RepoDir(slug)
+	if err != nil {
+		return "", err
+	}
+	dirs, err := store.ListReviewedPRDirs(repoDir)
+	if err != nil {
+		return "", err
+	}
+	if len(dirs) == 0 {
+		return "", fmt.Errorf("no reviewed PRs found under %s — run `revu review <PR>` first", repoDir)
+	}
+
+	items := make([]picker.LocalPRItem, 0, len(dirs))
+	for _, d := range dirs {
+		t := time.Time{}
+		if st, err := os.Stat(filepath.Join(d.Path, "review.yml")); err == nil {
+			t = st.ModTime()
+		}
+		items = append(items, picker.LocalPRItem{
+			Number:      d.Number,
+			Path:        d.Path,
+			GeneratedAt: t,
+		})
+	}
+	picked, err := picker.PickLocal(items)
+	if err != nil {
+		return "", err
+	}
+	if picked == nil {
+		fmt.Fprintln(cmd.OutOrStdout(), "Cancelled.")
+		return "", nil
+	}
+	return picked.Path, nil
 }
 
 // openReviewDir loads the review at dir and launches the TUI on it.
