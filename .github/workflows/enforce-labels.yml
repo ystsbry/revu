@@ -1,0 +1,28 @@
+name: Enforce labels.yml as source of truth
+
+# UI からのラベル追加・編集・削除を打ち消し、.github/labels.yml を真実の源とする。
+# label イベントを検知して即座に sync をかけ直すことで、UI 操作を実質無効化する。
+
+on:
+  label:
+    types: [created, edited, deleted]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  reconcile:
+    # Bot/Action による変更には反応しない（無限ループ防止）。
+    # GITHUB_TOKEN 起因のイベントは workflow を再起動しない仕様だが、
+    # 万一 PAT で操作された場合に備えて二重に弾く。
+    if: github.event.sender.type == 'User'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Re-sync labels from labels.yml
+        uses: EndBug/label-sync@v2
+        with:
+          config-file: .github/labels.yml
+          delete-other-labels: true
