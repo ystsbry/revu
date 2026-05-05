@@ -44,10 +44,14 @@ func BuildPayload(r *model.Review) (Payload, FilteredCounts, error) {
 	}
 
 	var counts FilteredCounts
+	// Initialize Comments to an empty slice so JSON marshals as [] rather than
+	// null when there are no accepted comments. GitHub's reviews API rejects
+	// null with HTTP 422 ("nil is not an array").
 	out := Payload{
 		CommitID: r.PR.HeadSHA,
 		Body:     r.SummaryBody,
 		Event:    string(r.ReviewEvent),
+		Comments: []PayloadComment{},
 	}
 
 	for i := range r.Comments {

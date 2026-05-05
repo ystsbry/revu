@@ -185,7 +185,13 @@ func (c *GhClient) PostReview(ctx context.Context, slug string, number int, p Pa
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return 0, fmt.Errorf("gh api POST %s: %w: %s", endpoint, err, strings.TrimSpace(stderr.String()))
+		// gh writes the short "gh: ... (HTTP N)" line to stderr but puts the
+		// full GitHub response body (where errors[].message lives) on stdout.
+		body := strings.TrimSpace(stdout.String())
+		if body == "" {
+			return 0, fmt.Errorf("gh api POST %s: %w: %s", endpoint, err, strings.TrimSpace(stderr.String()))
+		}
+		return 0, fmt.Errorf("gh api POST %s: %w: %s: body=%s", endpoint, err, strings.TrimSpace(stderr.String()), body)
 	}
 	var resp struct {
 		ID int64 `json:"id"`

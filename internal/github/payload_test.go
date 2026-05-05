@@ -177,4 +177,18 @@ func TestBuildPayloadAllRejected(t *testing.T) {
 	if counts.Accepted != 0 || counts.Rejected != 5 {
 		t.Errorf("counts = %+v", counts)
 	}
+	// Regression: GitHub's reviews API rejects "comments": null with HTTP 422
+	// ("nil is not an array"). With zero accepted comments the field must
+	// still serialize as an empty array.
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	if !strings.Contains(got, `"comments":[]`) {
+		t.Errorf(`want "comments":[] in JSON, got: %s`, got)
+	}
+	if strings.Contains(got, `"comments":null`) {
+		t.Errorf(`"comments":null leaks to API and causes 422: %s`, got)
+	}
 }
