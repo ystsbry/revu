@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -26,15 +27,15 @@ type Client interface {
 }
 
 // PRMeta is the subset of gh pr view JSON the review-pr skill consumes.
+// BaseRepo is the "owner/repo" slug of the PR's base repository, derived from
+// the PR url because gh pr view does not expose a baseRepository field.
 type PRMeta struct {
-	Number     int    `json:"number"`
-	HeadSha    string `json:"headRefOid"`
-	BaseBranch string `json:"baseRefName"`
-	Title      string `json:"title"`
-	Body       string `json:"body"`
-	BaseRepo   struct {
-		NameWithOwner string `json:"nameWithOwner"`
-	} `json:"baseRepository"`
+	Number     int
+	HeadSha    string
+	BaseBranch string
+	Title      string
+	Body       string
+	BaseRepo   string
 }
 
 // GhClient invokes the gh CLI as a subprocess.
@@ -99,7 +100,7 @@ func (c *GhClient) PRHead(ctx context.Context, slug string, number int) (string,
 func (c *GhClient) PRMeta(ctx context.Context, number int) (PRMeta, error) {
 	cmd := exec.CommandContext(ctx, c.bin(),
 		"pr", "view", strconv.Itoa(number),
-		"--json", "number,headRefOid,baseRefName,title,body,baseRepository",
+		"--json", "number,headRefOid,baseRefName,title,body,url",
 	)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -107,17 +108,51 @@ func (c *GhClient) PRMeta(ctx context.Context, number int) (PRMeta, error) {
 	if err := cmd.Run(); err != nil {
 		return PRMeta{}, fmt.Errorf("gh pr view: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
-	var meta PRMeta
-	if err := json.Unmarshal(stdout.Bytes(), &meta); err != nil {
+	var raw struct {
+		Number     int    `json:"number"`
+		HeadSha    string `json:"headRefOid"`
+		BaseBranch string `json:"baseRefName"`
+		Title      string `json:"title"`
+		Body       string `json:"body"`
+		URL        string `json:"url"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &raw); err != nil {
 		return PRMeta{}, fmt.Errorf("parse gh pr view output: %w", err)
 	}
-	if meta.BaseRepo.NameWithOwner == "" {
-		return PRMeta{}, errors.New("gh pr view returned empty baseRepository.nameWithOwner")
-	}
-	if meta.HeadSha == "" {
+	if raw.HeadSha == "" {
 		return PRMeta{}, errors.New("gh pr view returned empty headRefOid")
 	}
-	return meta, nil
+	slug, err := slugFromPRURL(raw.URL)
+	if err != nil {
+		return PRMeta{}, err
+	}
+	return PRMeta{
+		Number:     raw.Number,
+		HeadSha:    raw.HeadSha,
+		BaseBranch: raw.BaseBranch,
+		Title:      raw.Title,
+		Body:       raw.Body,
+		BaseRepo:   slug,
+	}, nil
+}
+
+// slugFromPRURL extracts the "owner/repo" slug from a GitHub PR URL like
+// https://github.com/owner/repo/pull/123. gh pr view does not expose a
+// baseRepository field, so we derive the base slug from the PR url, which
+// always points at the base repository (correct even for fork PRs).
+func slugFromPRURL(raw string) (string, error) {
+	if raw == "" {
+		return "", errors.New("gh pr view returned empty url")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("parse PR url %q: %w", raw, err)
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) < 4 || parts[2] != "pull" {
+		return "", fmt.Errorf("unexpected PR url path: %q", u.Path)
+	}
+	return parts[0] + "/" + parts[1], nil
 }
 
 // PRDiff returns the unified diff of the PR. Defaults to cwd's repo.
