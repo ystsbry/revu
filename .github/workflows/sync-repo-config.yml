@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: read
+  issues: write   # ラベル管理 API（POST/PATCH/DELETE /repos/.../labels）に必要
 
 jobs:
   sync:
