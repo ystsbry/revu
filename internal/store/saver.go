@@ -35,6 +35,83 @@ func SaveStatuses(r *model.Review) error {
 	return atomicWrite(dst, out, 0o644)
 }
 
+// SaveSessionID patches review.yml under reviewDir so generated_by.session_id
+// is set to the given value. Implemented as a targeted yaml.Node edit rather
+// than a full re-marshal of the Review struct, so the rest of the file
+// (comment ordering, scalar styles, etc.) is left untouched. A no-op when
+// sessionID is empty.
+func SaveSessionID(reviewDir, sessionID string) error {
+	if sessionID == "" {
+		return nil
+	}
+	if reviewDir == "" {
+		return errors.New("reviewDir is required")
+	}
+	path := filepath.Join(reviewDir, "review.yml")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+
+	var root yaml.Node
+	if err := yaml.Unmarshal(raw, &root); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	doc := mappingNode(&root)
+	if doc == nil {
+		return fmt.Errorf("%s: top-level is not a mapping", path)
+	}
+	gen := childNode(doc, "generated_by")
+	if gen == nil {
+		// generated_by missing entirely: append a fresh mapping.
+		gen = &yaml.Node{Kind: yaml.MappingNode}
+		doc.Content = append(doc.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "generated_by"},
+			gen,
+		)
+	}
+	if gen.Kind != yaml.MappingNode {
+		return fmt.Errorf("%s: generated_by is not a mapping", path)
+	}
+	if existing := childNode(gen, "session_id"); existing != nil {
+		existing.Kind = yaml.ScalarNode
+		existing.Tag = ""
+		existing.Style = 0
+		existing.Value = sessionID
+	} else {
+		gen.Content = append(gen.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "session_id"},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: sessionID},
+		)
+	}
+
+	out, err := yaml.Marshal(&root)
+	if err != nil {
+		return fmt.Errorf("marshal %s: %w", path, err)
+	}
+	return atomicWrite(path, out, 0o644)
+}
+
+// mappingNode returns the document's mapping node, unwrapping a top-level
+// DocumentNode if present.
+func mappingNode(n *yaml.Node) *yaml.Node {
+	if n.Kind == yaml.DocumentNode && len(n.Content) > 0 {
+		return n.Content[0]
+	}
+	return n
+}
+
+// childNode returns the value node for the given key in a mapping, or nil
+// if absent.
+func childNode(m *yaml.Node, key string) *yaml.Node {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return m.Content[i+1]
+		}
+	}
+	return nil
+}
+
 func atomicWrite(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".review-*.yml.tmp")

@@ -16,9 +16,10 @@ type PRMeta struct {
 }
 
 type GeneratedBy struct {
-	Tool  string `yaml:"tool"`
-	Skill string `yaml:"skill"`
-	Model string `yaml:"model"`
+	Tool      string `yaml:"tool"`
+	Skill     string `yaml:"skill"`
+	Model     string `yaml:"model"`
+	SessionID string `yaml:"session_id,omitempty"`
 }
 
 type Comment struct {

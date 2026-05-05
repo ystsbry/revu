@@ -20,8 +20,12 @@ func TestRelayProgress(t *testing.T) {
 	}, "\n")
 
 	var buf bytes.Buffer
-	if err := relayProgress(strings.NewReader(input), &buf); err != nil {
+	sessionID, err := relayProgress(strings.NewReader(input), &buf)
+	if err != nil {
 		t.Fatalf("relayProgress: %v", err)
+	}
+	if sessionID != "x" {
+		t.Errorf("sessionID = %q, want %q", sessionID, "x")
 	}
 	got := buf.String()
 
@@ -51,7 +55,7 @@ func TestRelayProgressIgnoresGarbageLines(t *testing.T) {
 		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"echo hi"}}]}}` + "\n" +
 		"<<malformed>>\n"
 	var buf bytes.Buffer
-	if err := relayProgress(strings.NewReader(input), &buf); err != nil {
+	if _, err := relayProgress(strings.NewReader(input), &buf); err != nil {
 		t.Fatalf("relayProgress: %v", err)
 	}
 	if !strings.Contains(buf.String(), "Bash: echo hi") {

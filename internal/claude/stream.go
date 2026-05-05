@@ -12,33 +12,38 @@ import (
 
 // relayProgress reads stream-json events from r (claude's stdout when run
 // with --output-format stream-json --verbose) and writes a compact human
-// summary to w. One line per assistant tool call, plus a final stats
-// line, so the user can watch what the review-pr skill is doing without
-// drowning in JSON.
+// summary to w. Returns the session_id observed on the system/init event
+// (empty string if the event was missing or unparseable) so callers can
+// later resume the same conversation via `claude --resume <id>`.
 //
 // Unknown / unparseable lines are silently ignored — claude may add new
 // event types over time, and we'd rather miss a line than crash mid-run.
-func relayProgress(r io.Reader, w io.Writer) error {
+func relayProgress(r io.Reader, w io.Writer) (string, error) {
 	sc := bufio.NewScanner(r)
 	// Stream-json lines can be large (full assistant messages embed
 	// markdown bodies). Bump the scanner's max token size well past the
 	// default 64 KiB.
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 
+	var sessionID string
 	for sc.Scan() {
 		var ev streamEvent
 		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
 			continue
 		}
+		if ev.Type == "system" && ev.Subtype == "init" && ev.SessionID != "" {
+			sessionID = ev.SessionID
+		}
 		renderEvent(w, ev)
 	}
-	return sc.Err()
+	return sessionID, sc.Err()
 }
 
 type streamEvent struct {
-	Type    string         `json:"type"`
-	Subtype string         `json:"subtype,omitempty"`
-	Message *streamMessage `json:"message,omitempty"`
+	Type      string         `json:"type"`
+	Subtype   string         `json:"subtype,omitempty"`
+	SessionID string         `json:"session_id,omitempty"`
+	Message   *streamMessage `json:"message,omitempty"`
 
 	// result fields (only set on type=="result")
 	DurationMs   int     `json:"duration_ms,omitempty"`

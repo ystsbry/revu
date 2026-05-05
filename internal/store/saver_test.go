@@ -95,3 +95,68 @@ func TestSaveStatusesNilReview(t *testing.T) {
 		t.Fatalf("expected error on nil")
 	}
 }
+
+func TestSaveSessionIDAddsField(t *testing.T) {
+	t.Parallel()
+	tmp := filepath.Join(t.TempDir(), "pr-1")
+	copyDir(t, "testdata/pr-1", tmp)
+
+	if err := SaveSessionID(tmp, "sess-abc-123"); err != nil {
+		t.Fatalf("SaveSessionID: %v", err)
+	}
+	r, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := r.GeneratedBy.SessionID; got != "sess-abc-123" {
+		t.Fatalf("session_id = %q want %q", got, "sess-abc-123")
+	}
+	// Other generated_by fields must survive the patch.
+	if r.GeneratedBy.Tool != "claude-code" || r.GeneratedBy.Skill != "review-pr" {
+		t.Fatalf("generated_by clobbered: %+v", r.GeneratedBy)
+	}
+	// Comments must remain loadable and unchanged.
+	if len(r.Comments) != 6 {
+		t.Fatalf("comments count = %d want 6", len(r.Comments))
+	}
+}
+
+func TestSaveSessionIDOverwrites(t *testing.T) {
+	t.Parallel()
+	tmp := filepath.Join(t.TempDir(), "pr-1")
+	copyDir(t, "testdata/pr-1", tmp)
+
+	if err := SaveSessionID(tmp, "first"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSessionID(tmp, "second"); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Load(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.GeneratedBy.SessionID; got != "second" {
+		t.Fatalf("session_id = %q want %q", got, "second")
+	}
+}
+
+func TestSaveSessionIDEmptyIsNoOp(t *testing.T) {
+	t.Parallel()
+	tmp := filepath.Join(t.TempDir(), "pr-1")
+	copyDir(t, "testdata/pr-1", tmp)
+	before, err := os.ReadFile(filepath.Join(tmp, "review.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSessionID(tmp, ""); err != nil {
+		t.Fatalf("SaveSessionID empty: %v", err)
+	}
+	after, err := os.ReadFile(filepath.Join(tmp, "review.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("review.yml mutated by empty session id")
+	}
+}
