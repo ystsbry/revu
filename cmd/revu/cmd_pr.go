@@ -63,12 +63,12 @@ revu call so the permission allowlist needs only Bash(revu *).`,
 			if err != nil {
 				return fmt.Errorf("locate home dir: %w", err)
 			}
-			reviewDir := filepath.Join(home, ".revu", meta.BaseRepo.NameWithOwner, fmt.Sprintf("pr-%d", n))
+			reviewDir := filepath.Join(home, ".revu", meta.BaseRepo, fmt.Sprintf("pr-%d", n))
 			if err := os.MkdirAll(filepath.Join(reviewDir, "comments"), 0o755); err != nil {
 				return fmt.Errorf("create review dir: %w", err)
 			}
 			out := prPrepareOutput{
-				Repo:       meta.BaseRepo.NameWithOwner,
+				Repo:       meta.BaseRepo,
 				Number:     n,
 				HeadSha:    meta.HeadSha,
 				BaseBranch: meta.BaseBranch,
