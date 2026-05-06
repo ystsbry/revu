@@ -88,7 +88,7 @@ func (m localModel) View() string {
 			head = selectedStyle.Render(head)
 		}
 		meta := fmt.Sprintf("reviewed %s", formatRelTime(it.GeneratedAt))
-		b.WriteString(fmt.Sprintf("%s%-7s %s\n", cursor, head, dimStyle.Render(meta)))
+		fmt.Fprintf(&b, "%s%-7s %s\n", cursor, head, dimStyle.Render(meta))
 	}
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("↑/↓ or j/k: move   enter: select   q/esc: cancel"))

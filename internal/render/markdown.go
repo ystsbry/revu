@@ -15,6 +15,6 @@ func Markdown(body string, width int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	return r.Render(body)
 }

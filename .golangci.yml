@@ -21,7 +21,14 @@ linters:
   #   - errcheck
 
   # linter ごとの細かい挙動はここで上書きする。
-  # settings:
+  settings:
+    errcheck:
+      # CLI/TUI 出力系では Fprint 系の戻り値をチェックしてもユーザーに返せる
+      # 復旧手段が無いため、プロジェクト方針として除外する。
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintln
+        - fmt.Fprintf
   #   govet:
   #     enable-all: true
   #   staticcheck:
