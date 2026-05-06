@@ -34,7 +34,7 @@ jobs:
       - name: build coverage report
         id: cov
         run: |
-          total=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}')
+          total=$(go tool cover -func=coverage.out | grep "^total:" | awk '{print $NF}')
           echo "total=$total" >> "$GITHUB_OUTPUT"
           {
             echo "report<<COVEOF"
