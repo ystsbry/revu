@@ -1,0 +1,81 @@
+name: claude-review
+
+# PR コメントに `/claude review` と書かれたら、revu の review-pr スキルで
+# レビュー下書きを生成し、`revu submit --yes` で GitHub に投稿する。
+#
+# 役割分担:
+#   - Claude (claude-code-action): review-pr スキルを実行し、
+#     ~/.revu/{owner}/{repo}/pr-{N}/ に review.yml + summary.md +
+#     comments/*.md を生成するだけ。GitHub への直接投稿はしない。
+#   - revu submit: 上で生成された下書きを GitHub PR レビューとして投稿。
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: claude-review-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: |
+      github.event.issue.pull_request != null
+      && startsWith(github.event.comment.body, '/claude review')
+      && github.event.sender.type != 'Bot'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: install revu binary and skills
+        run: |
+          make install PREFIX="$HOME/.local"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          make install-skills
+
+      - name: configure gh auth for revu pr / submit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh auth status
+
+      - name: generate review draft with claude (review-pr skill)
+        uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            この PR (#${{ github.event.issue.number }}, リポジトリ
+            ${{ github.repository }}) を `review-pr` スキルでレビューしてください。
+
+            出力は ~/.revu/${{ github.repository }}/pr-${{ github.event.issue.number }}/
+            に review.yml / summary.md / comments/*.md を生成するだけにし、
+            GitHub への投稿（gh pr review 等）は **絶対に行わないでください**。
+            投稿はこのワークフローの後段ステップで `revu submit --yes` が担当します。
+
+            日本語で出力してください。
+          claude_args: >
+            --allowedTools "Read,Grep,Glob,Edit,Write,Bash(gh:*),Bash(revu:*),Bash(git:*),Bash(mkdir:*),Bash(cp:*),Bash(cat:*)"
+
+      - name: submit review with revu
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          dir="$HOME/.revu/${{ github.repository }}/pr-${{ github.event.issue.number }}"
+          if [ ! -f "$dir/review.yml" ]; then
+            echo "::error::review draft not found at $dir (claude が下書きを生成していない可能性があります)"
+            exit 1
+          fi
+          revu submit --yes "$dir"

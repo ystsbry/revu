@@ -1,0 +1,71 @@
+name: claude-reply
+
+# inline review comment に `@claude-reply` と書かれたら、Claude が
+# 親コメントで指摘された内容が解消されているかを判定し、同じスレッドへ
+# reply する。
+
+on:
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: claude-reply-${{ github.event.comment.id }}
+  cancel-in-progress: false
+
+jobs:
+  reply:
+    if: |
+      contains(github.event.comment.body, '@claude-reply')
+      && github.event.sender.type != 'Bot'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            この PR の inline review comment に `@claude-reply` が付きました。
+            親コメントで指摘された内容が解消されているかを判定し、
+            同じスレッドに reply してください。
+
+            前提情報:
+            - リポジトリ: ${{ github.repository }}
+            - PR 番号: ${{ github.event.pull_request.number }}
+            - PR head SHA: ${{ github.event.pull_request.head.sha }}
+            - トリガコメント ID: ${{ github.event.comment.id }}
+            - 親コメント ID (返信先がスレッドの途中の場合のみ存在):
+              ${{ github.event.comment.in_reply_to_id }}
+
+            手順:
+            1. 親コメント ID が空の場合はトリガコメント自身がスレッドの起点なので、
+               トリガコメント ID をそのまま「指摘の起点」として扱う。
+               空でない場合は親コメントを起点として扱う。
+            2. 起点コメントを `gh api` で取得し、対象 file / line / 指摘本文を読む。
+                  gh api repos/${{ github.repository }}/pulls/comments/<起点ID>
+            3. 起点コメントが指している file の現在のコードを Read で確認する。
+            4. 起点コメント以降のコミットを `git log --oneline <commit_id>..HEAD -- <file>`
+               で確認し、対象行周辺の差分を `git diff <commit_id>..HEAD -- <file>` で見る。
+               起点コメント JSON の commit_id / original_commit_id を起点として使う。
+            5. 解消状況を以下の 3 段階で判定する:
+               - 解消済み: 何がどう直ったかを具体的に記述して承認
+               - 部分対応: 残っている観点を箇条書き
+               - 未対応: 残課題と推奨修正を提示
+            6. 同じスレッドに reply を投稿する:
+                  gh api -X POST repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments \
+                    -f body="..." \
+                    -F in_reply_to=<起点コメント ID>
+
+            日本語で出力してください。
+            判断は安全側に倒し、確証が無い場合は「確認しきれなかった点」として明示してください。
+          claude_args: >
+            --allowedTools "Read,Grep,Glob,Bash(gh:*),Bash(git:*)"

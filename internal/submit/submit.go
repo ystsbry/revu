@@ -26,7 +26,7 @@ var ErrCancelled = errors.New("submit cancelled by user")
 var ErrAlreadySubmitted = errors.New("review already submitted")
 
 // Options carries everything Run needs. All fields are required except
-// DryRun (defaults to false).
+// DryRun and Yes (both default to false).
 type Options struct {
 	Review *model.Review
 	Client github.Client
@@ -35,6 +35,10 @@ type Options struct {
 	Out    io.Writer
 	In     io.Reader
 	DryRun bool
+	// Yes skips the typed-confirmation prompt. Intended for non-interactive
+	// callers such as CI; In is still required because the flow falls back
+	// to the prompt when Yes is false.
+	Yes bool
 }
 
 // Run executes the full submit flow:
@@ -61,7 +65,7 @@ func Run(ctx context.Context, opts Options) error {
 		if opts.Now == nil {
 			opts.Now = time.Now
 		}
-		if opts.In == nil {
+		if !opts.Yes && opts.In == nil {
 			return errors.New("no input reader configured")
 		}
 	}
@@ -104,8 +108,10 @@ func Run(ctx context.Context, opts Options) error {
 		return nil
 	}
 
-	if !confirmTyped(opts.In, opts.Out, "submit") {
-		return ErrCancelled
+	if !opts.Yes {
+		if !confirmTyped(opts.In, opts.Out, "submit") {
+			return ErrCancelled
+		}
 	}
 
 	reviewID, err := opts.Client.PostReview(ctx, opts.Review.PR.Repo, opts.Review.PR.Number, payload)

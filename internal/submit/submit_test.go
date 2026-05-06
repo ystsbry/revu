@@ -112,6 +112,40 @@ func TestSubmitHappyPath(t *testing.T) {
 	}
 }
 
+func TestSubmitYesSkipsPrompt(t *testing.T) {
+	t.Parallel()
+	r := sampleReview()
+	var out bytes.Buffer
+
+	postCalled := false
+	client := &github.FakeClient{
+		PRHeadFunc: func(ctx context.Context, slug string, number int) (string, error) { return "abc1234", nil },
+		PostReviewFunc: func(ctx context.Context, slug string, number int, p github.Payload) (int64, error) {
+			postCalled = true
+			return 42, nil
+		},
+	}
+
+	err := Run(context.Background(), Options{
+		Review: r,
+		Client: client,
+		Saver:  func(*model.Review) error { return nil },
+		Now:    fixedNow,
+		Out:    &out,
+		// In is intentionally nil — Yes should make it unnecessary.
+		Yes: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !postCalled {
+		t.Errorf("PostReview must be called when Yes=true")
+	}
+	if strings.Contains(out.String(), "Type 'submit'") {
+		t.Errorf("confirmation prompt must not appear when Yes=true:\n%s", out.String())
+	}
+}
+
 func TestSubmitCancelledByPrompt(t *testing.T) {
 	t.Parallel()
 	r := sampleReview()
