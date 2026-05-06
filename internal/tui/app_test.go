@@ -180,8 +180,8 @@ func TestAppEnterAndLeaveEditView(t *testing.T) {
 	a := NewApp(Config{Review: r, Saver: func(*model.Review) error { return nil }})
 
 	// Navigate list -> detail at c1, then 'm' -> edit.
-	a.Update(runeKey('j'))                                  // summary -> c1
-	driveKey(a, tea.KeyMsg{Type: tea.KeyEnter})             // open detail
+	a.Update(runeKey('j'))                      // summary -> c1
+	driveKey(a, tea.KeyMsg{Type: tea.KeyEnter}) // open detail
 	if !a.IsDetail() {
 		t.Fatalf("expected detail state, got %v", a.State())
 	}
@@ -202,9 +202,9 @@ func TestAppEditCyclesSeverity(t *testing.T) {
 	r := sampleReview()
 	a := NewApp(Config{Review: r, Saver: func(*model.Review) error { return nil }})
 
-	a.Update(runeKey('j'))                                  // summary -> c1
-	driveKey(a, tea.KeyMsg{Type: tea.KeyEnter})             // open detail
-	driveKey(a, runeKey('m'))                       // open edit
+	a.Update(runeKey('j'))                      // summary -> c1
+	driveKey(a, tea.KeyMsg{Type: tea.KeyEnter}) // open detail
+	driveKey(a, runeKey('m'))                   // open edit
 
 	original := r.Comments[0].Severity
 	driveKey(a, runeKey('l')) // cycle severity forward
