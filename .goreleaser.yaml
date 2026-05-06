@@ -2,6 +2,13 @@ version: 2
 
 project_name: revu
 
+# main-track の rolling release が使う「次に出すバージョン」。
+# release/vX.x ブランチを切ったタイミングで PR でバンプする。
+# release-main.yml が yq でこの値を読み、`v${NEXT_VERSION}-pre.<timestamp>` を
+# prerelease タグとして発行する。
+env:
+  - NEXT_VERSION=0.1.0
+
 before:
   hooks:
     - go mod tidy
