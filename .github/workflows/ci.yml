@@ -1,0 +1,110 @@
+name: ci
+
+# Pull Request 単位で test / lint / format を並列に実行し、
+# それらが成功した後に build / build-make を並列に走らせる。
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go test
+        run: go test ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          # golangci-lint-action 側で独自にキャッシュするため、ここでは無効化する。
+          cache: false
+
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "::error::gofmt found unformatted files:"
+            echo "$out"
+            exit 1
+          fi
+
+  # リリースターゲット (linux/darwin × amd64/arm64) 全てでクロスコンパイル可能か確認する。
+  # issue #1 のような「特定アーキで突然壊れる」事案を PR 段階でブロックすることが目的。
+  build:
+    needs: [test, lint, format]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin]
+        goarch: [amd64, arm64]
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go build
+        run: go build ./...
+
+  # Makefile 経由のビルドが壊れていないかをスモーク的に確認するジョブ。
+  # cgo guard もここで一度だけ動かす（grep するだけで GOOS/GOARCH に依存しないため）。
+  build-make:
+    needs: [test, lint, format]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: cgo guard (warning)
+        # リリースは CGO_ENABLED=0 固定 (.goreleaser.yaml) なので、
+        # `import "C"` が混入すると ARM ホスト + amd64 Go (issue #1) のような環境で再び壊れる。
+        # 強制 fail はせず、PR に warning annotation を出すに留める。
+        run: |
+          hits=$(grep -RIn --include='*.go' '^[[:space:]]*import[[:space:]]\+"C"' . || true)
+          if [ -n "$hits" ]; then
+            echo "::warning::cgo (import \"C\") を検出。リリースは CGO_ENABLED=0 のため CGO 依存コードは混入させない方針です。"
+            echo "$hits"
+          fi
+
+      - name: make build
+        run: make build

@@ -93,7 +93,7 @@ func (m model) View() string {
 			cursor = cursorStyle.Render("▸ ")
 			title = selectedStyle.Render(title)
 		}
-		b.WriteString(fmt.Sprintf("%s#%-5d %s\n", cursor, it.Number, title))
+		fmt.Fprintf(&b, "%s#%-5d %s\n", cursor, it.Number, title)
 		meta := fmt.Sprintf("       %s → %s  by @%s", it.HeadRefName, it.BaseRefName, it.Author.Login)
 		b.WriteString(dimStyle.Render(meta))
 		b.WriteString("\n")

@@ -132,8 +132,8 @@ func DefaultSeverityRegistry() *SeverityRegistry {
 }
 
 var (
-	registryMu      sync.RWMutex
-	activeRegistry  = DefaultSeverityRegistry()
+	registryMu     sync.RWMutex
+	activeRegistry = DefaultSeverityRegistry()
 )
 
 // ActiveSeverityRegistry returns the registry that Severity.Valid() and

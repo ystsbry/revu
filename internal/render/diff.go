@@ -23,8 +23,8 @@ var (
 // cause matching lines to be marked with a ▶ in the gutter so the reader
 // can see where the comment's start and end land within the hunk.
 type DiffHunkOptions struct {
-	AnchorOldLine int  // pre-image line to highlight, 0 to disable
-	AnchorNewLine int  // post-image line to highlight, 0 to disable
+	AnchorOldLine int // pre-image line to highlight, 0 to disable
+	AnchorNewLine int // post-image line to highlight, 0 to disable
 }
 
 // DiffHunk renders a single hunk in unified-diff style with `+`/`-`/context
