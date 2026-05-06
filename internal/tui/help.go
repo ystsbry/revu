@@ -48,6 +48,16 @@ func helpView(width, height int) string {
 			},
 		},
 		{
+			"Edit metadata (in detail)",
+			[][2]string{
+				{"m", "open severity/category/line editor"},
+				{"j / k", "move between fields"},
+				{"h / l / ←→", "cycle value (or ±1 on line)"},
+				{"Enter", "type a new line number"},
+				{"Esc", "back to detail"},
+			},
+		},
+		{
 			"Commands (after :)",
 			[][2]string{
 				{":save / :w", "persist status changes"},

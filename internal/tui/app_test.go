@@ -174,6 +174,48 @@ func TestAppForceQuitCommand(t *testing.T) {
 	}
 }
 
+func TestAppEnterAndLeaveEditView(t *testing.T) {
+	t.Parallel()
+	r := sampleReview()
+	a := NewApp(Config{Review: r, Saver: func(*model.Review) error { return nil }})
+
+	// Navigate list -> detail at c1, then 'm' -> edit.
+	a.Update(runeKey('j'))                                  // summary -> c1
+	driveKey(a, tea.KeyMsg{Type: tea.KeyEnter})             // open detail
+	if !a.IsDetail() {
+		t.Fatalf("expected detail state, got %v", a.State())
+	}
+	driveKey(a, runeKey('m'))
+	if !a.IsEdit() {
+		t.Fatalf("after 'm' expected edit state, got %v", a.State())
+	}
+
+	// Esc returns to detail.
+	driveKey(a, tea.KeyMsg{Type: tea.KeyEsc})
+	if !a.IsDetail() {
+		t.Errorf("after Esc expected detail, got %v", a.State())
+	}
+}
+
+func TestAppEditCyclesSeverity(t *testing.T) {
+	t.Parallel()
+	r := sampleReview()
+	a := NewApp(Config{Review: r, Saver: func(*model.Review) error { return nil }})
+
+	a.Update(runeKey('j'))                                  // summary -> c1
+	driveKey(a, tea.KeyMsg{Type: tea.KeyEnter})             // open detail
+	driveKey(a, runeKey('m'))                       // open edit
+
+	original := r.Comments[0].Severity
+	driveKey(a, runeKey('l')) // cycle severity forward
+	if r.Comments[0].Severity == original {
+		t.Errorf("severity did not change from %q", original)
+	}
+	if !a.Dirty() {
+		t.Error("severity change should mark app dirty")
+	}
+}
+
 func TestAppUnknownCommand(t *testing.T) {
 	t.Parallel()
 	r := sampleReview()

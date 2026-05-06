@@ -32,6 +32,7 @@ const (
 	viewList viewState = iota
 	viewDetail
 	viewSummary
+	viewEdit
 )
 
 type App struct {
@@ -39,6 +40,7 @@ type App struct {
 	list     *views.List
 	detail   *views.Detail
 	summary  *views.Summary
+	edit     *views.Edit
 	state    viewState
 	review   *model.Review
 	saver    SaveFunc
@@ -89,6 +91,7 @@ func NewApp(cfg Config) *App {
 			HorizontalThreshold: cfg.Settings.HorizontalThreshold,
 		}),
 		summary:  views.NewSummary(cfg.Review, km),
+		edit:     views.NewEdit(cfg.Review, km, 0),
 		state:    viewList,
 		review:   cfg.Review,
 		saver:    cfg.Saver,
@@ -140,6 +143,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case views.GoToListMsg:
 		a.state = viewList
+		a.forwardSize()
+		return a, nil
+
+	case views.GoToEditMsg:
+		a.edit.SetIndex(m.Index)
+		a.state = viewEdit
 		a.forwardSize()
 		return a, nil
 
@@ -242,6 +251,9 @@ func (a *App) delegateToActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case viewSummary:
 		_, cmd := a.summary.Update(msg)
 		return a, cmd
+	case viewEdit:
+		_, cmd := a.edit.Update(msg)
+		return a, cmd
 	default:
 		_, cmd := a.list.Update(msg)
 		return a, cmd
@@ -254,6 +266,8 @@ func (a *App) forwardToActive(msg tea.Msg) {
 		a.detail.Update(msg)
 	case viewSummary:
 		a.summary.Update(msg)
+	case viewEdit:
+		a.edit.Update(msg)
 	default:
 		a.list.Update(msg)
 	}
@@ -427,6 +441,8 @@ func (a *App) View() string {
 		body = a.detail.View()
 	case viewSummary:
 		body = a.summary.View()
+	case viewEdit:
+		body = a.edit.View()
 	default:
 		body = a.list.View()
 	}
@@ -470,6 +486,7 @@ func (a *App) State() viewState { return a.state }
 func (a *App) IsList() bool    { return a.state == viewList }
 func (a *App) IsDetail() bool  { return a.state == viewDetail }
 func (a *App) IsSummary() bool { return a.state == viewSummary }
+func (a *App) IsEdit() bool    { return a.state == viewEdit }
 
 // Run starts the bubbletea program.
 func Run(cfg Config) error {

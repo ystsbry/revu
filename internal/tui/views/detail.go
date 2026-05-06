@@ -169,6 +169,11 @@ func (d *Detail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				path := filepath.Join(d.review.BaseDir, c.BodyFile)
 				return d, func() tea.Msg { return EditMsg{Path: path} }
 			}
+		case m.String() == "m":
+			if d.current() != nil {
+				idx := d.index
+				return d, func() tea.Msg { return GoToEditMsg{Index: idx} }
+			}
 		}
 	}
 	return d, nil
@@ -210,7 +215,7 @@ func (d *Detail) headerView(c *model.Comment) string {
 
 func (d *Detail) footerView() string {
 	style := lipgloss.NewStyle().Faint(true).Padding(0, 1)
-	return style.Render("[a]ccept [r]eject [u]ndo  [n]ext [p]rev  [↑↓/Home/End]scroll  [e]dit  [l]ist  [:]cmd  [q]uit")
+	return style.Render("[a]ccept [r]eject [u]ndo  [n]ext [p]rev  [↑↓/Home/End]scroll  [e]dit body [m]eta  [l]ist  [:]cmd  [q]uit")
 }
 
 func (d *Detail) renderCodePane(c *model.Comment, height int) string {
