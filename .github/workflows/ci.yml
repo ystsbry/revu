@@ -12,6 +12,11 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # PR にカバレッジレポートを sticky comment として post するため、
+    # この job だけ pull-requests: write を持たせる。
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
 
@@ -20,8 +25,61 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: go test
-        run: go test ./...
+      - name: go test with coverage
+        run: |
+          set -o pipefail
+          go test -coverprofile=coverage.out -covermode=atomic ./... \
+            | tee test-output.txt
+
+      - name: build coverage report
+        id: cov
+        run: |
+          total=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}')
+          echo "total=$total" >> "$GITHUB_OUTPUT"
+          {
+            echo "report<<COVEOF"
+            echo
+            echo "<details>"
+            echo "<summary>Per-package coverage</summary>"
+            echo
+            echo '```'
+            grep -E "coverage:" test-output.txt || echo "(no per-package coverage output)"
+            echo '```'
+            echo
+            echo "</details>"
+            echo
+            echo "<details>"
+            echo "<summary>Per-function detail</summary>"
+            echo
+            echo '```'
+            go tool cover -func=coverage.out
+            echo '```'
+            echo
+            echo "</details>"
+            echo "COVEOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: generate HTML coverage report
+        run: go tool cover -html=coverage.out -o coverage.html
+
+      - name: upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            coverage.html
+          retention-days: 14
+
+      - name: post coverage comment on PR
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: coverage
+          message: |
+            ## Test coverage: **${{ steps.cov.outputs.total }}**
+            ${{ steps.cov.outputs.report }}
+
+            _`coverage.html` / `coverage.out` are available as workflow artifacts._
 
   lint:
     runs-on: ubuntu-latest
