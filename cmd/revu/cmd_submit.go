@@ -12,13 +12,16 @@ import (
 )
 
 func newSubmitCmd() *cobra.Command {
-	var dryRun bool
+	var (
+		dryRun bool
+		yes    bool
+	)
 	cmd := &cobra.Command{
 		Use:   "submit [dir]",
 		Short: "Submit the review to GitHub",
 		Long: `Submit the review (summary + accepted inline comments) to GitHub.
 
-Without --dry-run, you must type 'submit' literally to confirm.
+Without --dry-run or --yes, you must type 'submit' literally to confirm.
 The flow refuses to proceed if:
   - gh is not authenticated
   - the PR's head_sha has moved since the review was generated
@@ -45,10 +48,12 @@ The flow refuses to proceed if:
 				Out:    cmd.OutOrStdout(),
 				In:     os.Stdin,
 				DryRun: dryRun,
+				Yes:    yes,
 			}
 			return submit.Run(context.Background(), opts)
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview the payload without contacting GitHub")
+	cmd.Flags().BoolVar(&yes, "yes", false, "skip the typed-confirmation prompt (for non-interactive use)")
 	return cmd
 }
