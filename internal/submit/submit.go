@@ -39,6 +39,11 @@ type Options struct {
 	// callers such as CI; In is still required because the flow falls back
 	// to the prompt when Yes is false.
 	Yes bool
+	// AcceptPending promotes every pending comment to accepted before the
+	// payload is built. Intended for non-interactive flows (e.g. CI) where
+	// no human will triage comments in the TUI. Rejected comments are left
+	// untouched: rejection is an explicit signal that must be preserved.
+	AcceptPending bool
 }
 
 // Run executes the full submit flow:
@@ -71,6 +76,14 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	if opts.Out == nil {
 		return errors.New("no output writer configured")
+	}
+
+	if opts.AcceptPending {
+		for i := range opts.Review.Comments {
+			if opts.Review.Comments[i].Status == model.StatusPending {
+				opts.Review.Comments[i].Status = model.StatusAccepted
+			}
+		}
 	}
 
 	payload, counts, err := github.BuildPayload(opts.Review)

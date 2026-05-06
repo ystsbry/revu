@@ -17,6 +17,7 @@ permissions:
   contents: read
   pull-requests: write
   issues: write
+  id-token: write
 
 concurrency:
   group: claude-review-${{ github.event.issue.number }}
@@ -55,7 +56,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             この PR (#${{ github.event.issue.number }}, リポジトリ
             ${{ github.repository }}) を `review-pr` スキルでレビューしてください。
@@ -78,4 +79,4 @@ jobs:
             echo "::error::review draft not found at $dir (claude が下書きを生成していない可能性があります)"
             exit 1
           fi
-          revu submit --yes "$dir"
+          revu submit --yes --accept-pending "$dir"

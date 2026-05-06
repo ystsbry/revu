@@ -13,8 +13,9 @@ import (
 
 func newSubmitCmd() *cobra.Command {
 	var (
-		dryRun bool
-		yes    bool
+		dryRun        bool
+		yes           bool
+		acceptPending bool
 	)
 	cmd := &cobra.Command{
 		Use:   "submit [dir]",
@@ -42,18 +43,20 @@ The flow refuses to proceed if:
 			}
 
 			opts := submit.Options{
-				Review: r,
-				Client: github.New(),
-				Saver:  store.SaveStatuses,
-				Out:    cmd.OutOrStdout(),
-				In:     os.Stdin,
-				DryRun: dryRun,
-				Yes:    yes,
+				Review:        r,
+				Client:        github.New(),
+				Saver:         store.SaveStatuses,
+				Out:           cmd.OutOrStdout(),
+				In:            os.Stdin,
+				DryRun:        dryRun,
+				Yes:           yes,
+				AcceptPending: acceptPending,
 			}
 			return submit.Run(context.Background(), opts)
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview the payload without contacting GitHub")
 	cmd.Flags().BoolVar(&yes, "yes", false, "skip the typed-confirmation prompt (for non-interactive use)")
+	cmd.Flags().BoolVar(&acceptPending, "accept-pending", false, "promote pending comments to accepted before submitting (for non-interactive use; rejected comments are left untouched)")
 	return cmd
 }

@@ -257,6 +257,57 @@ func TestSubmitAlreadySubmittedRefuses(t *testing.T) {
 	}
 }
 
+func TestSubmitAcceptPendingPromotesAndPosts(t *testing.T) {
+	t.Parallel()
+	r := sampleReview()
+	// sampleReview has c1=accepted, c2=pending, plus a rejected one in some tests.
+	// Add an explicit rejected comment to confirm AcceptPending leaves it alone.
+	r.Comments = append(r.Comments, model.Comment{
+		ID: "c3", Status: model.StatusRejected, Severity: model.SeverityNit, Category: model.CategoryStyle,
+		Path: "c.go", Line: 3, Side: model.SideRight, Body: "no",
+	})
+
+	var out bytes.Buffer
+	var posted github.Payload
+	client := &github.FakeClient{
+		PRHeadFunc: func(ctx context.Context, slug string, number int) (string, error) { return "abc1234", nil },
+		PostReviewFunc: func(ctx context.Context, slug string, number int, p github.Payload) (int64, error) {
+			posted = p
+			return 7, nil
+		},
+	}
+
+	var saved *model.Review
+	err := Run(context.Background(), Options{
+		Review:        r,
+		Client:        client,
+		Saver:         func(rr *model.Review) error { saved = rr; return nil },
+		Now:           fixedNow,
+		Out:           &out,
+		Yes:           true,
+		AcceptPending: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(posted.Comments) != 2 {
+		t.Errorf("posted comments = %d, want 2 (c1 already accepted + c2 promoted from pending)", len(posted.Comments))
+	}
+	if !strings.Contains(out.String(), "Inline comments: 2 accepted (1 rejected, 0 pending") {
+		t.Errorf("counts not promoted in preview:\n%s", out.String())
+	}
+	if saved == nil {
+		t.Fatal("saver not invoked")
+	}
+	// Persisted statuses should reflect the promotion so the YAML on disk is honest.
+	if saved.Comments[1].Status != model.StatusAccepted {
+		t.Errorf("c2 status after submit = %q, want accepted", saved.Comments[1].Status)
+	}
+	if saved.Comments[2].Status != model.StatusRejected {
+		t.Errorf("c3 status after submit = %q, want rejected (AcceptPending must not touch rejected)", saved.Comments[2].Status)
+	}
+}
+
 func TestSubmitDryRunDoesNotCheckHead(t *testing.T) {
 	t.Parallel()
 	r := sampleReview()
