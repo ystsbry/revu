@@ -79,4 +79,4 @@ jobs:
             echo "::error::review draft not found at $dir (claude が下書きを生成していない可能性があります)"
             exit 1
           fi
-          revu submit --yes "$dir"
+          revu submit --yes --accept-pending "$dir"
