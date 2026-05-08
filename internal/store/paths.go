@@ -207,6 +207,33 @@ func LatestPRDir(repoDir string) (string, error) {
 	return dirs[0].Path, nil
 }
 
+// ListPRNumbers returns every PR number whose pr-N directory exists under
+// repoDir, regardless of whether it contains a review.yml. Used by `revu
+// prune` to enumerate candidates for deletion. Returned in ascending order.
+func ListPRNumbers(repoDir string) ([]int, error) {
+	entries, err := os.ReadDir(repoDir)
+	if err != nil {
+		return nil, fmt.Errorf("read repo dir: %w", err)
+	}
+	var out []int
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasPrefix(name, "pr-") {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimPrefix(name, "pr-"))
+		if err != nil || n <= 0 {
+			continue
+		}
+		out = append(out, n)
+	}
+	sort.Ints(out)
+	return out, nil
+}
+
 // LatestReviewDirForPR returns the most recently written {sha}/review.yml dir
 // under ~/.revu/{owner}/{repo}/pr-{pr}/. Useful right after a review run when
 // the caller knows the PR number but not the head_sha used to write the

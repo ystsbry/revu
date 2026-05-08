@@ -20,11 +20,22 @@ import (
 type Client interface {
 	AuthStatus(ctx context.Context) error
 	PRHead(ctx context.Context, slug string, number int) (string, error)
+	PRState(ctx context.Context, slug string, number int) (string, error)
 	PostReview(ctx context.Context, slug string, number int, p Payload) (int64, error)
 	ListReviewRequestedPRs(ctx context.Context) ([]PRListItem, error)
 	PRMeta(ctx context.Context, number int) (PRMeta, error)
 	PRDiff(ctx context.Context, number int) (string, error)
 }
+
+// PR state values returned by PRState. These match the strings GitHub's API
+// emits for the `state` field. CLOSED covers both "closed without merge" and
+// "merged" depending on the gh JSON field selected; we ask for `state` which
+// returns OPEN/CLOSED/MERGED.
+const (
+	PRStateOpen   = "OPEN"
+	PRStateClosed = "CLOSED"
+	PRStateMerged = "MERGED"
+)
 
 // PRMeta is the subset of gh pr view JSON the review-pr skill consumes.
 // BaseRepo is the "owner/repo" slug of the PR's base repository, derived from
@@ -92,6 +103,33 @@ func (c *GhClient) PRHead(ctx context.Context, slug string, number int) (string,
 		return "", errors.New("gh pr view returned empty headRefOid")
 	}
 	return resp.HeadRefOid, nil
+}
+
+// PRState returns the GitHub state of the PR ("OPEN", "CLOSED", or "MERGED").
+// Used by `revu prune` to classify which review directories are safe to
+// delete.
+func (c *GhClient) PRState(ctx context.Context, slug string, number int) (string, error) {
+	cmd := exec.CommandContext(ctx, c.bin(),
+		"pr", "view", strconv.Itoa(number),
+		"--repo", slug,
+		"--json", "state",
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("gh pr view %d (state): %w: %s", number, err, strings.TrimSpace(stderr.String()))
+	}
+	var resp struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
+		return "", fmt.Errorf("parse gh pr view state output: %w", err)
+	}
+	if resp.State == "" {
+		return "", errors.New("gh pr view returned empty state")
+	}
+	return resp.State, nil
 }
 
 // PRMeta returns the metadata fields the review-pr skill needs (head_sha,

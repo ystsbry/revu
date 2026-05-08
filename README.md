@@ -271,6 +271,19 @@ default_event = "COMMENT"
 
 例えば `kudos` のような「良かった点」用の severity を `review_event = "APPROVE"` で定義しておけば、その severity だけのコメントは `APPROVE` のままレビューを下げません。
 
+## クローズ/マージ済み PR のレビューを掃除
+
+`revu prune` で `~/.revu/{owner}/{repo}/` 配下の `pr-N/` を走査し、GitHub 上で CLOSED / MERGED の PR に紐づくディレクトリを一括削除できます。OPEN PR や状態取得に失敗した PR は削除されません。
+
+```bash
+revu prune                       # cwd リポジトリを対象、確認プロンプト付き
+revu prune --repo owner/repo     # 別リポジトリを指定
+revu prune --dry-run             # プランの表示のみ
+revu prune -y                    # 確認プロンプトをスキップ
+```
+
+`submitted_at` が無いレビュー（ローカルで未投稿のもの）は **WARNING 付きで** 削除プランに含まれます。失いたくない作業がある場合は確認プロンプトでキャンセルしてください。
+
 ## 投稿フローの安全装置
 
 `revu submit` は次の場合に投稿を中断します:
