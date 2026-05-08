@@ -122,6 +122,19 @@ func TestSourcesHonorsEnv(t *testing.T) {
 	}
 }
 
+func TestUserConfigPath(t *testing.T) {
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	got, err := UserConfigPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(xdg, "revu", "config.toml")
+	if got != want {
+		t.Errorf("UserConfigPath = %q, want %q", got, want)
+	}
+}
+
 func TestSampleTOMLParses(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "config.toml")
@@ -274,7 +287,16 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
-func TestSourcesDiscoversRepoFiles(t *testing.T) {
+// writeLayerConfig creates layerDir/config.toml with the given content.
+func writeLayerConfig(t *testing.T, layerDir, content string) {
+	t.Helper()
+	if err := os.MkdirAll(layerDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(layerDir, "config.toml"), content)
+}
+
+func TestSourcesDiscoversRepoLayers(t *testing.T) {
 	root := initRepo(t)
 	t.Setenv("REVU_CONFIG", "")
 	// Pin XDG_CONFIG_HOME so os.UserConfigDir() is deterministic and isolated.
@@ -287,8 +309,8 @@ func TestSourcesDiscoversRepoFiles(t *testing.T) {
 	}
 	want := []string{
 		filepath.Join(xdg, "revu", "config.toml"),
-		filepath.Join(root, ".revu"),
-		filepath.Join(root, ".revu-local"),
+		filepath.Join(root, ".revu", "config.toml"),
+		filepath.Join(root, ".revu-local", "config.toml"),
 	}
 	if len(got) != len(want) {
 		t.Fatalf("Sources len=%d want %d (got %v)", len(got), len(want), got)
@@ -296,6 +318,24 @@ func TestSourcesDiscoversRepoFiles(t *testing.T) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Errorf("Sources[%d]=%q want %q", i, got[i], want[i])
+		}
+	}
+
+	dirs, err := LayerDirs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDirs := []string{
+		filepath.Join(xdg, "revu"),
+		filepath.Join(root, ".revu"),
+		filepath.Join(root, ".revu-local"),
+	}
+	if len(dirs) != len(wantDirs) {
+		t.Fatalf("LayerDirs len=%d want %d (got %v)", len(dirs), len(wantDirs), dirs)
+	}
+	for i := range wantDirs {
+		if dirs[i] != wantDirs[i] {
+			t.Errorf("LayerDirs[%d]=%q want %q", i, dirs[i], wantDirs[i])
 		}
 	}
 }
@@ -307,11 +347,7 @@ func TestLoadLocalOverridesShared(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 
 	// Global: long context lines + a custom editor.
-	userPath := filepath.Join(xdg, "revu", "config.toml")
-	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, userPath, `
+	writeLayerConfig(t, filepath.Join(xdg, "revu"), `
 [editor]
 command = "vi"
 [ui]
@@ -319,12 +355,12 @@ code_context_lines = 8
 horizontal_threshold = 200
 `)
 	// Project-shared: bumps editor only.
-	writeFile(t, filepath.Join(root, ".revu"), `
+	writeLayerConfig(t, filepath.Join(root, ".revu"), `
 [editor]
 command = "code --wait"
 `)
 	// Per-clone local: overrides editor again, leaves UI keys alone.
-	writeFile(t, filepath.Join(root, ".revu-local"), `
+	writeLayerConfig(t, filepath.Join(root, ".revu-local"), `
 [editor]
 command = "zed --wait"
 `)
@@ -353,13 +389,13 @@ command = "zed --wait"
 	}
 }
 
-func TestLoadOnlySharedRepoFile(t *testing.T) {
+func TestLoadOnlySharedRepoLayer(t *testing.T) {
 	root := initRepo(t)
 	t.Setenv("REVU_CONFIG", "")
 	xdg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 
-	writeFile(t, filepath.Join(root, ".revu"), `
+	writeLayerConfig(t, filepath.Join(root, ".revu"), `
 [ui]
 code_context_lines = 12
 `)
@@ -385,12 +421,12 @@ code_context_lines = 12
 	}
 }
 
-func TestLoadEnvOverrideSkipsRepoFiles(t *testing.T) {
+func TestLoadEnvOverrideSkipsRepoLayers(t *testing.T) {
 	root := initRepo(t)
 
-	// Even though .revu-local exists in the repo, $REVU_CONFIG should win
+	// Even though .revu-local/config.toml exists, $REVU_CONFIG should win
 	// outright when set.
-	writeFile(t, filepath.Join(root, ".revu-local"), `
+	writeLayerConfig(t, filepath.Join(root, ".revu-local"), `
 [editor]
 command = "zed --wait"
 `)
@@ -410,6 +446,15 @@ command = "vi"
 	}
 	if len(sources) != 1 || sources[0].Path != envPath {
 		t.Errorf("sources should be only envPath; got %+v", sources)
+	}
+
+	// LayerDirs must report nothing when the env override is in effect.
+	dirs, err := LayerDirs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dirs) != 0 {
+		t.Errorf("LayerDirs should be empty under $REVU_CONFIG; got %v", dirs)
 	}
 }
 

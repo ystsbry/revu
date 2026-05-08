@@ -1,14 +1,16 @@
 // Package config loads revu's optional TOML configuration.
 //
-// Resolution order, lowest priority first (each layer is merged onto the
-// previous one; values from higher layers override the same keys below):
+// Each "config layer" is a directory holding a config.toml plus an optional
+// templates/ subdirectory. Layers are consulted lowest priority first and
+// merged onto Defaults(); values from higher layers override the same keys
+// below.
 //
-//  1. os.UserConfigDir()/revu/config.toml          (global user config)
-//  2. <repo-root>/.revu                            (project-shared, committed)
-//  3. <repo-root>/.revu-local                      (per-clone, gitignored)
+//  1. os.UserConfigDir()/revu/                     (global user config)
+//  2. <repo-root>/.revu/                           (project-shared, committed)
+//  3. <repo-root>/.revu-local/                     (per-clone, gitignored)
 //
 // $REVU_CONFIG, when set, replaces the entire chain with that single file
-// (used by tests and CI for isolation).
+// (used by tests and CI for isolation; templates/ discovery is skipped).
 //
 // Every layer is optional: missing files are silently skipped and Defaults()
 // fills the gaps. All fields are documented inline.
@@ -144,32 +146,43 @@ type Source struct {
 	Loaded bool
 }
 
-// UserConfigPath returns the global user config path
-// (os.UserConfigDir()/revu/config.toml). Used by `revu config --init`.
-func UserConfigPath() (string, error) {
+// UserConfigDir returns the global user config directory
+// (os.UserConfigDir()/revu). Used by `revu config --init` and the template
+// resolver.
+func UserConfigDir() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("locate user config dir: %w", err)
 	}
-	return filepath.Join(dir, "revu", "config.toml"), nil
+	return filepath.Join(dir, "revu"), nil
 }
 
-// Sources returns the ordered list of paths Load will consult, from
-// lowest precedence to highest. When $REVU_CONFIG is set, only that path
-// is returned (it short-circuits discovery).
-//
-// Repo-root detection runs `git rev-parse --show-toplevel` in cwd. If
-// that fails (not inside a git repo), the per-repo entries are omitted.
-func Sources() ([]string, error) {
-	if v := os.Getenv("REVU_CONFIG"); v != "" {
-		return []string{v}, nil
+// UserConfigPath returns ~/.config/revu/config.toml, the file revu writes
+// when running `revu config --init`.
+func UserConfigPath() (string, error) {
+	dir, err := UserConfigDir()
+	if err != nil {
+		return "", err
 	}
-	out := make([]string, 0, 3)
-	user, err := UserConfigPath()
+	return filepath.Join(dir, "config.toml"), nil
+}
+
+// LayerDirs returns the ordered list of config-layer directories, lowest
+// priority first. Each layer is a directory that may contain config.toml
+// and/or templates/. When $REVU_CONFIG is set, this returns nil — the env
+// override short-circuits layered discovery.
+//
+// Repo-root detection runs `git rev-parse --show-toplevel` in cwd. If that
+// fails (not inside a git repo), the per-repo entries are omitted.
+func LayerDirs() ([]string, error) {
+	if os.Getenv("REVU_CONFIG") != "" {
+		return nil, nil
+	}
+	user, err := UserConfigDir()
 	if err != nil {
 		return nil, err
 	}
-	out = append(out, user)
+	out := []string{user}
 	if root := repoRoot(); root != "" {
 		out = append(out,
 			filepath.Join(root, ".revu"),
@@ -179,9 +192,33 @@ func Sources() ([]string, error) {
 	return out, nil
 }
 
-// repoRoot returns the absolute path of the current git repo's top level,
+// Sources returns the ordered list of TOML paths Load will consult, lowest
+// priority first. When $REVU_CONFIG is set, only that path is returned.
+// Otherwise sources are <layer-dir>/config.toml for every layer returned by
+// LayerDirs.
+func Sources() ([]string, error) {
+	if v := os.Getenv("REVU_CONFIG"); v != "" {
+		return []string{v}, nil
+	}
+	dirs, err := LayerDirs()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(dirs))
+	for _, d := range dirs {
+		out = append(out, filepath.Join(d, "config.toml"))
+	}
+	return out, nil
+}
+
+// RepoRoot returns the absolute path of the current git repo's top level,
 // or "" when not in a git repo (or git is unavailable). Errors are silent
-// because revu is usable outside a repo too.
+// because revu is usable outside a repo too. Exported for the template
+// resolver, which lives in another package but needs the same root.
+func RepoRoot() string { return repoRoot() }
+
+// repoRoot is the unexported implementation; kept separate so the package
+// docs stay focused on the exported API.
 func repoRoot() string {
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
 	var stdout bytes.Buffer

@@ -81,17 +81,29 @@ revu pr diff <PR_NUMBER>
 
 ユーザー上書きがあればそちらを優先する。無ければ skill 同梱を使う。
 
-**サマリのテンプレート解決順:**
-1. `~/.config/revu/templates/summary.md.tmpl` (存在すれば)
-2. `~/.claude/skills/review-pr/templates/summary.md.tmpl` (skill 同梱)
+**解決手順（サマリ・インラインコメント共通）:**
 
-**インラインコメントのテンプレート解決順:**
-1. `~/.config/revu/templates/inline-comment.md.tmpl` (存在すれば)
-2. `~/.claude/skills/review-pr/templates/inline-comment.md.tmpl` (skill 同梱)
+```bash
+# 1. revu に上書きの有無を尋ねる。終了コード 0 なら標準出力に絶対パスが返る。
+SUMMARY_TMPL=$(revu templates path summary.md.tmpl 2>/dev/null) \
+  || SUMMARY_TMPL="$HOME/.claude/skills/review-pr/templates/summary.md.tmpl"
 
-`$REVU_TEMPLATES` 環境変数が設定されていれば、`~/.config/revu/templates/` の代わりにそれを使う。
+INLINE_TMPL=$(revu templates path inline-comment.md.tmpl 2>/dev/null) \
+  || INLINE_TMPL="$HOME/.claude/skills/review-pr/templates/inline-comment.md.tmpl"
+```
 
-`Read` ツールで存在確認しつつ、ヒットした方の内容を構造ガイドとして以降の生成に使う。テンプレートはあくまで「お手本」。固定文字列の置換ではない。
+`revu templates path` の探索順は（高優先 → 低優先）:
+
+1. `<repo-root>/.revu-local/templates/<NAME>` — 個人ローカル（gitignore 推奨）
+2. `<repo-root>/.revu/templates/<NAME>` — プロジェクト共有（コミット推奨）
+3. `$REVU_TEMPLATES/<NAME>` — env が立っているとき
+4. `~/.config/revu/templates/<NAME>` — グローバル
+
+いずれにもヒットしなかったとき `revu templates path` は終了コード 1 を返すので、`||` で skill 同梱パスにフォールバックする。
+
+`revu` が `$PATH` に無い環境では skill 同梱（`~/.claude/skills/review-pr/templates/`）を直接使う。
+
+`Read` ツールで上記 `$SUMMARY_TMPL` / `$INLINE_TMPL` を読み込み、内容を構造ガイドとして以降の生成に使う。テンプレートはあくまで「お手本」。固定文字列の置換ではない。
 
 ### 5. severity セットの解決
 
