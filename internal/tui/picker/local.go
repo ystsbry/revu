@@ -8,9 +8,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// LocalPRItem describes one reviewed pr-N directory presented in the picker.
+// LocalPRItem describes one reviewed pr-N/{sha} directory presented in the
+// picker. ShortSHA is shown alongside the PR number so users can tell which
+// commit a review was generated against.
 type LocalPRItem struct {
 	Number      int
+	ShortSHA    string
 	Path        string
 	GeneratedAt time.Time
 }
@@ -87,7 +90,11 @@ func (m localModel) View() string {
 			cursor = cursorStyle.Render("▸ ")
 			head = selectedStyle.Render(head)
 		}
-		meta := fmt.Sprintf("reviewed %s", formatRelTime(it.GeneratedAt))
+		sha := it.ShortSHA
+		if sha == "" {
+			sha = "-"
+		}
+		meta := fmt.Sprintf("%s · reviewed %s", sha, formatRelTime(it.GeneratedAt))
 		fmt.Fprintf(&b, "%s%-7s %s\n", cursor, head, dimStyle.Render(meta))
 	}
 	b.WriteString("\n")

@@ -81,6 +81,7 @@ func pickReviewedPRDir(cmd *cobra.Command) (string, error) {
 		}
 		items = append(items, picker.LocalPRItem{
 			Number:      d.Number,
+			ShortSHA:    d.ShortSHA,
 			Path:        d.Path,
 			GeneratedAt: t,
 		})

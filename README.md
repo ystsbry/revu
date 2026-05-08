@@ -16,7 +16,7 @@ Claude Code が生成した PR レビューを TUI で確認・編集し、GitHu
     revu review [PR_NUMBER]   ← cwd リポジトリで自分にレビュー依頼が来ている PR
                                 を選び、内部で claude CLI を起動してレビュー生成
         ↓
-[2] ~/.revu/{owner}/{repo}/pr-{N}/ に review.yml + summary.md + comments/*.md が出力される
+[2] ~/.revu/{owner}/{repo}/pr-{N}/{sha[:7]}/ に review.yml + summary.md + comments/*.md が出力される
         ↓
 [3] revu open で TUI を起動（revu review 経由なら自動で開く）
         ↓
@@ -72,7 +72,7 @@ make uninstall PREFIX=$HOME/.local      # 別 PREFIX で入れた場合
 ln -s "$PWD/skills/review-pr" "$HOME/.claude/skills/review-pr"
 ```
 
-Claude Code に `/review-pr <PR_NUMBER>` と入力すると skill が起動し、`~/.revu/{owner}/{repo}/pr-{N}/` 配下にレビューを書き出します。
+Claude Code に `/review-pr <PR_NUMBER>` と入力すると skill が起動し、`~/.revu/{owner}/{repo}/pr-{N}/{sha[:7]}/` 配下にレビューを書き出します（SHA は PR の `head_sha` 先頭 7 文字）。
 
 ```
 /review-pr 123
@@ -283,7 +283,7 @@ default_event = "COMMENT"
 ## ファイル構成
 
 ```
-~/.revu/{owner}/{repo}/pr-{N}/
+~/.revu/{owner}/{repo}/pr-{N}/{sha[:7]}/
 ├── review.yml              ← メタデータ + コメント参照（ツールが書き換える）
 ├── summary.md              ← PR 全体のレビュー本文（人間も編集可）
 └── comments/

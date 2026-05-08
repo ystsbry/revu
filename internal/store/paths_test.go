@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseRemoteURL(t *testing.T) {
@@ -81,34 +83,94 @@ func TestRepoDirAndPRDir(t *testing.T) {
 	}
 }
 
+func TestShortSHA(t *testing.T) {
+	t.Parallel()
+	got, err := ShortSHA("abcdef0123456789")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "abcdef0" {
+		t.Fatalf("ShortSHA = %q, want %q", got, "abcdef0")
+	}
+	if _, err := ShortSHA("abc"); err == nil {
+		t.Fatalf("ShortSHA on short input should error")
+	}
+	if _, err := ShortSHA(""); err == nil {
+		t.Fatalf("ShortSHA on empty input should error")
+	}
+}
+
+func TestReviewDir(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("REVU_HOME", root)
+	got, err := ReviewDir("ystsbry/revu", 42, "abcdef0123456789")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, "ystsbry", "revu", "pr-42", "abcdef0")
+	if got != want {
+		t.Fatalf("ReviewDir = %q, want %q", got, want)
+	}
+
+	if _, err := ReviewDir("ystsbry/revu", 0, "abcdef0123456789"); err == nil {
+		t.Fatalf("ReviewDir with pr=0 should error")
+	}
+	if _, err := ReviewDir("ystsbry/revu", 42, "abc"); err == nil {
+		t.Fatalf("ReviewDir with short sha should error")
+	}
+}
+
+// mkReviewed writes review.yml at repoDir/pr-N/sha/review.yml. modTime, when
+// non-zero, is applied to the review.yml so tests can assert on which SHA
+// dir wins under multiple-SHA scenarios.
+func mkReviewed(t *testing.T, repoDir string, pr int, sha string, modTime time.Time) string {
+	t.Helper()
+	dir := filepath.Join(repoDir, fmt.Sprintf("pr-%d", pr), sha)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "review.yml")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !modTime.IsZero() {
+		if err := os.Chtimes(path, modTime, modTime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
 func TestLatestPRDir(t *testing.T) {
 	dir := t.TempDir()
-	mkReviewed := func(name string) {
-		p := filepath.Join(dir, name)
-		if err := os.MkdirAll(p, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(p, "review.yml"), nil, 0o644); err != nil {
-			t.Fatal(err)
-		}
+	mkReviewed(t, dir, 1, "aaaaaaa", time.Time{})
+	mkReviewed(t, dir, 7, "bbbbbbb", time.Time{})
+	mkReviewed(t, dir, 42, "ccccccc", time.Time{})
+
+	// pr-99 exists but has no SHA-with-review subdir; must be skipped.
+	if err := os.MkdirAll(filepath.Join(dir, "pr-99", "ddddddd"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	mkdir := func(name string) {
-		if err := os.MkdirAll(filepath.Join(dir, name), 0o755); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.MkdirAll(filepath.Join(dir, "pr-not-a-number"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	mkReviewed("pr-1")
-	mkReviewed("pr-7")
-	mkReviewed("pr-42")
-	mkdir("pr-99") // higher number but no review.yml; must be skipped
-	mkdir("pr-not-a-number")
-	mkdir("notes")
+	if err := os.MkdirAll(filepath.Join(dir, "notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Legacy pr-N/review.yml (no SHA dir) must NOT be discovered.
+	if err := os.MkdirAll(filepath.Join(dir, "pr-200"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pr-200", "review.yml"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := LatestPRDir(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(dir, "pr-42")
+	want := filepath.Join(dir, "pr-42", "ccccccc")
 	if got != want {
 		t.Fatalf("LatestPRDir = %q want %q", got, want)
 	}
@@ -133,19 +195,12 @@ func TestLatestPRDirSkipsUnreviewed(t *testing.T) {
 
 func TestListReviewedPRDirs(t *testing.T) {
 	dir := t.TempDir()
-	mkReviewed := func(name string) {
-		p := filepath.Join(dir, name)
-		if err := os.MkdirAll(p, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(p, "review.yml"), nil, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	mkReviewed("pr-3")
-	mkReviewed("pr-12")
-	mkReviewed("pr-7")
-	if err := os.MkdirAll(filepath.Join(dir, "pr-99"), 0o755); err != nil {
+	mkReviewed(t, dir, 3, "aaaaaaa", time.Time{})
+	mkReviewed(t, dir, 12, "bbbbbbb", time.Time{})
+	mkReviewed(t, dir, 7, "ccccccc", time.Time{})
+
+	// pr-99 with no review.yml under any subdir → skipped.
+	if err := os.MkdirAll(filepath.Join(dir, "pr-99", "ddddddd"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -156,14 +211,60 @@ func TestListReviewedPRDirs(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("len=%d want 3 (got %v)", len(got), got)
 	}
-	want := []int{12, 7, 3}
-	for i, w := range want {
-		if got[i].Number != w {
-			t.Fatalf("got[%d].Number=%d want %d", i, got[i].Number, w)
+	wantNumbers := []int{12, 7, 3}
+	wantSHAs := []string{"bbbbbbb", "ccccccc", "aaaaaaa"}
+	for i, n := range wantNumbers {
+		if got[i].Number != n {
+			t.Fatalf("got[%d].Number=%d want %d", i, got[i].Number, n)
 		}
-		if got[i].Path != filepath.Join(dir, fmt.Sprintf("pr-%d", w)) {
-			t.Fatalf("got[%d].Path=%q", i, got[i].Path)
+		if got[i].ShortSHA != wantSHAs[i] {
+			t.Fatalf("got[%d].ShortSHA=%q want %q", i, got[i].ShortSHA, wantSHAs[i])
 		}
+		want := filepath.Join(dir, fmt.Sprintf("pr-%d", n), wantSHAs[i])
+		if got[i].Path != want {
+			t.Fatalf("got[%d].Path=%q want %q", i, got[i].Path, want)
+		}
+	}
+}
+
+func TestListReviewedPRDirsPicksLatestSHA(t *testing.T) {
+	dir := t.TempDir()
+	older := time.Now().Add(-2 * time.Hour)
+	newer := time.Now().Add(-5 * time.Minute)
+	mkReviewed(t, dir, 10, "0000111", older)
+	mkReviewed(t, dir, 10, "2222333", newer)
+
+	got, err := ListReviewedPRDirs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len=%d want 1 (multiple SHAs should collapse to the newest)", len(got))
+	}
+	if got[0].ShortSHA != "2222333" {
+		t.Fatalf("ShortSHA=%q want %q (newer ModTime)", got[0].ShortSHA, "2222333")
+	}
+	if !strings.HasSuffix(got[0].Path, filepath.Join("pr-10", "2222333")) {
+		t.Fatalf("Path=%q does not end with pr-10/2222333", got[0].Path)
+	}
+}
+
+func TestListReviewedPRDirsIgnoresLegacyLayout(t *testing.T) {
+	dir := t.TempDir()
+	// Pre-SHA-layout: pr-5/review.yml directly. Must be ignored.
+	if err := os.MkdirAll(filepath.Join(dir, "pr-5"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pr-5", "review.yml"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ListReviewedPRDirs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("legacy pr-N/review.yml should be ignored, got %v", got)
 	}
 }
 

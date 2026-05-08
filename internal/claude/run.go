@@ -14,6 +14,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+
+	"github.com/ystsbry/revu/internal/store"
 )
 
 // ErrCLINotFound is returned when the `claude` executable is not on PATH.
@@ -30,8 +32,8 @@ type ReviewArgs struct {
 	Focus string
 
 	// OwnerRepo is the GitHub slug ("owner/repo") the skill will write its
-	// output under, i.e. ~/.revu/{owner}/{repo}/pr-{N}/. Required so the
-	// caller can resolve the output dir without re-running gh.
+	// output under, i.e. ~/.revu/{owner}/{repo}/pr-{N}/{sha[:7]}/. Required
+	// so the caller can resolve the output dir without re-running gh.
 	OwnerRepo string
 
 	// Bin overrides the resolved claude binary path. Empty falls back to
@@ -127,9 +129,12 @@ func RunReviewPR(ctx context.Context, args ReviewArgs) (ReviewResult, error) {
 		return ReviewResult{}, fmt.Errorf("claude --print %q: %w", prompt, err)
 	}
 
-	out := filepath.Join(revuRoot, args.OwnerRepo, "pr-"+strconv.Itoa(args.PRNumber))
-	if _, err := os.Stat(out); err != nil {
-		return ReviewResult{}, fmt.Errorf("expected review at %s but it was not created (claude may have failed silently): %w", out, err)
+	// The skill writes to ~/.revu/{owner}/{repo}/pr-{N}/{sha[:7]}/. We don't
+	// know head_sha here without re-running gh, so discover the SHA dir by
+	// picking the most recently written review under pr-{N}/.
+	out, err := store.LatestReviewDirForPR(args.OwnerRepo, args.PRNumber)
+	if err != nil {
+		return ReviewResult{}, fmt.Errorf("locate review dir after claude run (claude may have failed silently): %w", err)
 	}
 	return ReviewResult{OutDir: out, SessionID: sessionID}, nil
 }

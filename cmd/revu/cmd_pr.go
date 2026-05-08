@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ystsbry/revu/internal/github"
+	"github.com/ystsbry/revu/internal/store"
 )
 
 // newPRCmd groups PR-related helpers used by the review-pr skill so the
@@ -43,7 +44,7 @@ func newPRPrepareCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "prepare <PR_NUMBER>",
 		Short: "Fetch PR metadata, create the review output dir, and print everything as JSON",
-		Long: `Fetch PR metadata via gh, create ~/.revu/{owner}/{repo}/pr-{N}/comments/,
+		Long: `Fetch PR metadata via gh, create ~/.revu/{owner}/{repo}/pr-{N}/{sha[:7]}/comments/,
 and print a JSON object the review-pr skill can consume directly.
 
 Replaces the skill's previous "gh pr view" + "mkdir -p" steps with one
@@ -59,11 +60,10 @@ revu call so the permission allowlist needs only Bash(revu *).`,
 			if err != nil {
 				return err
 			}
-			home, err := os.UserHomeDir()
+			reviewDir, err := store.ReviewDir(meta.BaseRepo, n, meta.HeadSha)
 			if err != nil {
-				return fmt.Errorf("locate home dir: %w", err)
+				return fmt.Errorf("compute review dir: %w", err)
 			}
-			reviewDir := filepath.Join(home, ".revu", meta.BaseRepo, fmt.Sprintf("pr-%d", n))
 			if err := os.MkdirAll(filepath.Join(reviewDir, "comments"), 0o755); err != nil {
 				return fmt.Errorf("create review dir: %w", err)
 			}
