@@ -109,7 +109,7 @@ func openReviewDir(dir, repoRootOverride string) error {
 	if err != nil {
 		return err
 	}
-	cfg, _, _, cfgErr := config.Load()
+	cfg, _, cfgErr := config.Load()
 	if cfgErr != nil {
 		return fmt.Errorf("load config: %w", cfgErr)
 	}

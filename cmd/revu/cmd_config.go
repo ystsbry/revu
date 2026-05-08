@@ -15,16 +15,24 @@ func newConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Show or initialise revu's configuration",
-		Long: `Without arguments, prints the effective config (defaults merged
-with values from the config file, if present) and the resolved file path.
+		Long: `Without arguments, prints the effective config (defaults merged with the
+discovered config files, in precedence order) along with each source's
+load status.
 
-With --init, writes a starter config.toml to the resolved path. Will not
-overwrite an existing file.`,
+Resolution order, lowest priority first:
+  1. ~/.config/revu/config.toml         (global)
+  2. <repo-root>/.revu                  (project-shared, committed)
+  3. <repo-root>/.revu-local            (per-clone, gitignored)
+
+$REVU_CONFIG, when set, replaces the entire chain with that single file.
+
+With --init, writes a starter config.toml to the global user-config path.
+Will not overwrite an existing file.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 
 			if initFlag {
-				path, err := config.Path()
+				path, err := config.UserConfigPath()
 				if err != nil {
 					return err
 				}
@@ -41,17 +49,24 @@ overwrite an existing file.`,
 				return nil
 			}
 
-			cfg, path, ok, err := config.Load()
+			cfg, sources, err := config.Load()
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(out, "Path:                       %s\n", path)
-			if ok {
-				fmt.Fprintln(out, "Status:                     loaded")
-			} else {
-				fmt.Fprintln(out, "Status:                     not present (defaults shown)")
+
+			fmt.Fprintln(out, "Sources (lowest → highest priority):")
+			if len(sources) == 0 {
+				fmt.Fprintln(out, "  (none — using defaults)")
+			}
+			for _, s := range sources {
+				status := "not present"
+				if s.Loaded {
+					status = "loaded"
+				}
+				fmt.Fprintf(out, "  %-12s %s\n", status, s.Path)
 			}
 			fmt.Fprintln(out)
+
 			editor := cfg.Editor.Command
 			if editor == "" {
 				editor = "(falls back to $EDITOR)"
@@ -68,6 +83,6 @@ overwrite an existing file.`,
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&initFlag, "init", false, "write a starter config to the resolved path (will not overwrite)")
+	cmd.Flags().BoolVar(&initFlag, "init", false, "write a starter config to ~/.config/revu/config.toml (will not overwrite)")
 	return cmd
 }

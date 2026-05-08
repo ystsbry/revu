@@ -1,15 +1,27 @@
-// Package config loads revu's optional TOML configuration from
-// $REVU_CONFIG (when set) or os.UserConfigDir()/revu/config.toml.
+// Package config loads revu's optional TOML configuration.
 //
-// The file is optional: when missing, Defaults() is returned and revu
-// behaves as if no config existed. All fields are documented inline.
+// Resolution order, lowest priority first (each layer is merged onto the
+// previous one; values from higher layers override the same keys below):
+//
+//  1. os.UserConfigDir()/revu/config.toml          (global user config)
+//  2. <repo-root>/.revu                            (project-shared, committed)
+//  3. <repo-root>/.revu-local                      (per-clone, gitignored)
+//
+// $REVU_CONFIG, when set, replaces the entire chain with that single file
+// (used by tests and CI for isolation).
+//
+// Every layer is optional: missing files are silently skipped and Defaults()
+// fills the gaps. All fields are documented inline.
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 
@@ -123,12 +135,18 @@ func defaultSeverityDefs() []SeverityDef {
 	return out
 }
 
-// Path returns the path that will be loaded by Load. Honors $REVU_CONFIG
-// override; otherwise os.UserConfigDir()/revu/config.toml.
-func Path() (string, error) {
-	if v := os.Getenv("REVU_CONFIG"); v != "" {
-		return v, nil
-	}
+// Source describes one config file that contributes to the effective
+// configuration, in the order Load consulted it.
+type Source struct {
+	// Path is the absolute filesystem location revu inspected.
+	Path string
+	// Loaded is true when the file existed and parsed successfully.
+	Loaded bool
+}
+
+// UserConfigPath returns the global user config path
+// (os.UserConfigDir()/revu/config.toml). Used by `revu config --init`.
+func UserConfigPath() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("locate user config dir: %w", err)
@@ -136,31 +154,85 @@ func Path() (string, error) {
 	return filepath.Join(dir, "revu", "config.toml"), nil
 }
 
-// Load reads the TOML file at Path(), validates it, and merges it onto
-// Defaults(). A missing file is not an error; Defaults() is returned along
-// with the resolved path and ok=false.
-func Load() (cfg Config, path string, ok bool, err error) {
-	path, err = Path()
+// Sources returns the ordered list of paths Load will consult, from
+// lowest precedence to highest. When $REVU_CONFIG is set, only that path
+// is returned (it short-circuits discovery).
+//
+// Repo-root detection runs `git rev-parse --show-toplevel` in cwd. If
+// that fails (not inside a git repo), the per-repo entries are omitted.
+func Sources() ([]string, error) {
+	if v := os.Getenv("REVU_CONFIG"); v != "" {
+		return []string{v}, nil
+	}
+	out := make([]string, 0, 3)
+	user, err := UserConfigPath()
 	if err != nil {
-		return Defaults(), "", false, err
+		return nil, err
+	}
+	out = append(out, user)
+	if root := repoRoot(); root != "" {
+		out = append(out,
+			filepath.Join(root, ".revu"),
+			filepath.Join(root, ".revu-local"),
+		)
+	}
+	return out, nil
+}
+
+// repoRoot returns the absolute path of the current git repo's top level,
+// or "" when not in a git repo (or git is unavailable). Errors are silent
+// because revu is usable outside a repo too.
+func repoRoot() string {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = nil
+	if err := cmd.Run(); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(stdout.String())
+}
+
+// Load consults the sources returned by Sources() in order, merging each
+// layer that exists onto Defaults(). Returns the effective config along
+// with the per-source disposition, so `revu config` can show users which
+// files contributed.
+//
+// A source whose file is missing is silently skipped. A source that fails
+// to parse or validates poorly aborts Load with an error pointing at the
+// offending path.
+func Load() (cfg Config, sources []Source, err error) {
+	paths, err := Sources()
+	if err != nil {
+		return Defaults(), nil, err
 	}
 	cfg = Defaults()
-	if _, statErr := os.Stat(path); statErr != nil {
-		if errors.Is(statErr, os.ErrNotExist) {
-			return cfg, path, false, nil
+	sources = make([]Source, 0, len(paths))
+	for _, p := range paths {
+		st, statErr := os.Stat(p)
+		if statErr != nil {
+			if errors.Is(statErr, os.ErrNotExist) {
+				sources = append(sources, Source{Path: p, Loaded: false})
+				continue
+			}
+			return Defaults(), sources, statErr
 		}
-		return Defaults(), path, false, statErr
-	}
+		if st.IsDir() {
+			return Defaults(), sources, fmt.Errorf("%s is a directory; expected a TOML file", p)
+		}
 
-	var fileCfg Config
-	if _, err := toml.DecodeFile(path, &fileCfg); err != nil {
-		return Defaults(), path, false, fmt.Errorf("parse %s: %w", path, err)
+		var fileCfg Config
+		if _, decodeErr := toml.DecodeFile(p, &fileCfg); decodeErr != nil {
+			return Defaults(), sources, fmt.Errorf("parse %s: %w", p, decodeErr)
+		}
+		merged, mergeErr := merge(cfg, fileCfg)
+		if mergeErr != nil {
+			return Defaults(), sources, fmt.Errorf("%s: %w", p, mergeErr)
+		}
+		cfg = merged
+		sources = append(sources, Source{Path: p, Loaded: true})
 	}
-	merged, err := merge(cfg, fileCfg)
-	if err != nil {
-		return Defaults(), path, false, err
-	}
-	return merged, path, true, nil
+	return cfg, sources, nil
 }
 
 func merge(base, over Config) (Config, error) {

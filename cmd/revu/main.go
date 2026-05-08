@@ -54,7 +54,7 @@ func newRootCmd() *cobra.Command {
 // configured names. A missing config file is fine; a malformed one or
 // invalid [[review.severity]] entries abort the command.
 func installSeverityRegistry() error {
-	cfg, _, _, err := config.Load()
+	cfg, _, err := config.Load()
 	if err != nil {
 		return err
 	}
