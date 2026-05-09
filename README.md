@@ -133,6 +133,33 @@ cp ~/.claude/skills/review-pr/templates/summary.md.tmpl .revu/templates/
 
 `revu templates list` で現在解決される一覧を確認できます。テンプレートはあくまで「お手本」で、Claude が構造ガイドとして参照するだけです。固定の文字列置換ではありません。
 
+## レビュー指針（コーディング規約など）の追加
+
+skill 同梱の観点表（bug / design / style / perf / security / test / doc）に加えて、プロジェクトやチーム固有のレビュー指針を Markdown ファイルで渡せます。`config.toml` の `[review] guidelines` にパスを並べると、レビュー時に skill がそれらを読み込んで観点に加えます。
+
+```toml
+# <repo>/.revu/config.toml
+[review]
+guidelines = [
+  "guidelines/coding-style.md",
+  "guidelines/security-checklist.md",
+]
+```
+
+- パスは **その config.toml からの相対** で解決されます（絶対パスも可）
+- レイヤー（user → `.revu` → `.revu-local`）で **連結** されるので、グローバル規約とプロジェクト固有規約を併用できます
+- 存在しないパスは `revu guidelines list` で MISSING 表示、`revu guidelines paths` では除外（skill は欠落を黙殺してレビュー継続）
+
+```text
+$ revu guidelines list
+  #  STATUS   PATH
+  1  OK       /home/.../.config/revu/guidelines/personal.md
+  2  OK       /repo/guidelines/coding-style.md
+  3  MISSING  /repo/guidelines/security-checklist.md
+```
+
+ガイドラインに書かれた具体的なルールは、レビューコメントの根拠として参照されます（「`coding-style.md` の "命名" 節に従い ...」のような形）。
+
 ## コマンド一覧
 
 | コマンド | 用途 |

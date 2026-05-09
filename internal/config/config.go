@@ -70,6 +70,15 @@ type ReviewConfig struct {
 	// user provides one or more entries, the entire built-in list is
 	// replaced (no per-name merging).
 	Severities []SeverityDef `toml:"severity"`
+
+	// Guidelines is the list of paths to additional review-guidance files
+	// (markdown, plain text) that the review-pr skill loads alongside its
+	// built-in viewpoints. Paths in the TOML may be relative to the
+	// containing config.toml; after Load() they are absolute and
+	// concatenated across layers (user → .revu → .revu-local). Missing
+	// files are tolerated at load time and surfaced via
+	// `revu guidelines list`.
+	Guidelines []string `toml:"guidelines"`
 }
 
 // SeverityDef is one entry in the [[review.severity]] TOML array.
@@ -262,7 +271,7 @@ func Load() (cfg Config, sources []Source, err error) {
 		if _, decodeErr := toml.DecodeFile(p, &fileCfg); decodeErr != nil {
 			return Defaults(), sources, fmt.Errorf("parse %s: %w", p, decodeErr)
 		}
-		merged, mergeErr := merge(cfg, fileCfg)
+		merged, mergeErr := merge(cfg, fileCfg, filepath.Dir(p))
 		if mergeErr != nil {
 			return Defaults(), sources, fmt.Errorf("%s: %w", p, mergeErr)
 		}
@@ -272,7 +281,10 @@ func Load() (cfg Config, sources []Source, err error) {
 	return cfg, sources, nil
 }
 
-func merge(base, over Config) (Config, error) {
+// merge applies the over layer onto base. baseDir is the directory of the
+// config.toml that produced over; it's used to resolve relative paths
+// (e.g. review.guidelines entries) against the layer that introduced them.
+func merge(base, over Config, baseDir string) (Config, error) {
 	out := base
 	if over.Editor.Command != "" {
 		out.Editor.Command = over.Editor.Command
@@ -297,7 +309,28 @@ func merge(base, over Config) (Config, error) {
 		}
 		out.Review.Severities = append([]SeverityDef(nil), over.Review.Severities...)
 	}
+	for _, g := range over.Review.Guidelines {
+		abs := g
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(baseDir, abs)
+		}
+		abs = filepath.Clean(abs)
+		// Dedupe so the same path appearing in multiple layers (or twice
+		// in the same layer by mistake) does not double-load.
+		if !containsString(out.Review.Guidelines, abs) {
+			out.Review.Guidelines = append(out.Review.Guidelines, abs)
+		}
+	}
 	return out, nil
+}
+
+func containsString(s []string, v string) bool {
+	for _, x := range s {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 // BuildSeverityRegistry validates defs and constructs a model registry.
@@ -339,6 +372,16 @@ horizontal_threshold = 100
 [review]
 # Default review_event for new reviews (currently informational).
 default_event = "COMMENT"
+
+# Additional review-guidance files the review-pr skill reads alongside its
+# built-in viewpoints. Paths are relative to this config.toml. Layers
+# (user / .revu / .revu-local) are concatenated, so a project can append
+# its own rules without losing global ones. Missing files are reported by
+# 'revu guidelines list' but never abort a review.
+# guidelines = [
+#   "guidelines/coding-style.md",
+#   "guidelines/security-checklist.md",
+# ]
 
 # Severity definitions. When omitted, the built-in 4 levels are used
 # (critical / major / minor / nit). When you define one entry, the whole

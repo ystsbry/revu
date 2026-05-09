@@ -421,6 +421,45 @@ code_context_lines = 12
 	}
 }
 
+func TestLoadGuidelinesConcatenatesAndResolvesRelative(t *testing.T) {
+	root := initRepo(t)
+	t.Setenv("REVU_CONFIG", "")
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+
+	writeLayerConfig(t, filepath.Join(xdg, "revu"), `
+[review]
+guidelines = ["personal.md"]
+`)
+	writeLayerConfig(t, filepath.Join(root, ".revu"), `
+[review]
+guidelines = ["docs/style.md"]
+`)
+	writeLayerConfig(t, filepath.Join(root, ".revu-local"), `
+[review]
+guidelines = ["my-extras.md"]
+`)
+
+	cfg, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{
+		filepath.Join(xdg, "revu", "personal.md"),
+		filepath.Join(root, ".revu", "docs", "style.md"),
+		filepath.Join(root, ".revu-local", "my-extras.md"),
+	}
+	got := cfg.Review.Guidelines
+	if len(got) != len(want) {
+		t.Fatalf("len=%d want %d (%v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("[%d] %q want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestLoadEnvOverrideSkipsRepoLayers(t *testing.T) {
 	root := initRepo(t)
 
