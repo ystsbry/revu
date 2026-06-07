@@ -114,6 +114,17 @@ $review-pr 123 --focus security,perf
 
 `revu review --codex` はこの skill を `codex exec --json` 経由で非対話的に起動します。
 
+#### Codex 起動時に revu が上書きする設定
+
+`revu review --codex` が `codex exec` を起動するとき、以下の `-c` 上書きを per-invocation で渡します。いずれも **この exec の間だけ** 有効で、`~/.codex/config.toml` の値は別の codex 実行には残ります。
+
+| 上書き | 理由 |
+|---|---|
+| `sandbox_workspace_write.network_access=true` | `workspace-write` sandbox は既定で外向き通信を遮断するため、`gh pr view` / `gh pr diff` が api.github.com に届かない |
+| `model_reasoning_effort="high"` | 既定の `medium` だと codex が skill の「5〜10件目安」を無視して「1件に絞る」と宣言しがちなため、PR 全文を読み通す予算を確保する |
+
+さらに、revu は codex に送るプロンプト末尾に **「自主的に 1 件まで縮減しないこと」** という指示を 1 行付けます (claude には付けません)。これは codex の exec モードの過剰な簡略化バイアスを打ち消すためです。`--focus` によるカテゴリ絞り込みはそのまま尊重されます。
+
 skill が完了したら `revu open` で開けます。
 
 ### `revu review` で claude を使うときの permission

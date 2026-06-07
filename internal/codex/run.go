@@ -67,6 +67,12 @@ func RunReviewPR(ctx context.Context, args ReviewArgs) (ReviewResult, error) {
 	if args.Focus != "" {
 		prompt += " --focus " + args.Focus
 	}
+	// Codex's exec mode reliably over-narrows the skill's "5〜10件目安"
+	// guideline — without explicit prodding it tends to announce that
+	// it'll cap the review at a single finding. Reinforce the skill's
+	// stated count so the model doesn't take a shortcut. (Claude doesn't
+	// need this; the SKILL.md wording is already calibrated for it.)
+	prompt += "\n\nSKILL.md の \"数より質: 5〜10件を目安\" を守り、自主的に1件まで縮減しないこと。--focus 指定によるカテゴリ絞り込みはそのまま尊重してよい。"
 
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -82,25 +88,7 @@ func RunReviewPR(ctx context.Context, args ReviewArgs) (ReviewResult, error) {
 		return ReviewResult{}, fmt.Errorf("getwd: %w", err)
 	}
 
-	// `--sandbox workspace-write` lets the skill write its review files;
-	// `--add-dir ~/.revu` extends the writable set to the revu output
-	// dir, which lives outside the repo. `codex exec` is already
-	// non-interactive, so there's no approval flag to pass.
-	//
-	// `--json` makes codex emit one event per line on stdout (see
-	// stream.go for the event shapes we recognise).
-	//
-	// All of --cd / --sandbox / --add-dir / --json are options of the
-	// `exec` subcommand (not the top-level `codex`), so they go after
-	// `exec` in the argv.
-	cmd := exec.CommandContext(ctx, bin,
-		"exec",
-		"--cd", cwd,
-		"--sandbox", "workspace-write",
-		"--add-dir", revuRoot,
-		"--json",
-		prompt,
-	)
+	cmd := exec.CommandContext(ctx, bin, buildExecArgs(prompt, cwd, revuRoot)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stderr = os.Stderr
 	stdout, err := cmd.StdoutPipe()
@@ -123,6 +111,50 @@ func RunReviewPR(ctx context.Context, args ReviewArgs) (ReviewResult, error) {
 		return ReviewResult{}, fmt.Errorf("locate review dir after codex run (codex may have failed silently): %w", err)
 	}
 	return ReviewResult{OutDir: out, SessionID: sessionID}, nil
+}
+
+// buildExecArgs constructs the argv (after the binary) for
+// `codex exec ... <prompt>`. Extracted so the flag set is unit-testable —
+// the network-egress override in particular is load-bearing for the
+// skill, and we don't want a refactor to silently drop it.
+//
+// Why each flag:
+//
+//   - `--sandbox workspace-write` lets the skill write its review files;
+//     `--add-dir ~/.revu` extends the writable set to the revu output
+//     dir, which lives outside the repo. `codex exec` is already
+//     non-interactive, so there's no approval flag to pass.
+//   - `--json` makes codex emit one event per line on stdout (see
+//     stream.go for the event shapes we recognise).
+//   - `-c sandbox_workspace_write.network_access=true` opens outbound
+//     network egress just for this exec run. The skill calls
+//     `revu pr prepare` / `revu pr diff`, which shell out to `gh` and
+//     have to reach api.github.com — and codex's workspace-write sandbox
+//     blocks egress by default at the Landlock/seccomp layer. CLI `-c`
+//     overrides config.toml, so the user's global
+//     `network_access = false` stays in place for every other codex
+//     invocation.
+//   - `-c model_reasoning_effort="high"` is a per-invocation bump from
+//     codex's default `medium`. Without it, codex exec under-shoots the
+//     skill's "5〜10件を目安" guideline and announces it will limit the
+//     review to a single finding. PR review is a high-effort task — it
+//     needs the budget to actually read the diff and surface real
+//     issues. The override only applies to this exec run; the user's
+//     global default for other codex invocations is unchanged.
+//
+// All of these are options of the `exec` subcommand (not the top-level
+// `codex`), so they go after `exec` in the argv.
+func buildExecArgs(prompt, cwd, revuRoot string) []string {
+	return []string{
+		"exec",
+		"-c", "sandbox_workspace_write.network_access=true",
+		"-c", `model_reasoning_effort="high"`,
+		"--cd", cwd,
+		"--sandbox", "workspace-write",
+		"--add-dir", revuRoot,
+		"--json",
+		prompt,
+	}
 }
 
 // ResumeArgs mirrors claude.ResumeArgs.
