@@ -141,6 +141,59 @@ func TestSaveSessionIDOverwrites(t *testing.T) {
 	}
 }
 
+func TestSaveGeneratedByOverwritesTool(t *testing.T) {
+	t.Parallel()
+	tmp := filepath.Join(t.TempDir(), "pr-1")
+	copyDir(t, "testdata/pr-1", tmp)
+
+	patch := GeneratedByPatch{
+		Tool:      "codex",
+		SessionID: "thread-019e9ff6",
+	}
+	if err := SaveGeneratedBy(tmp, patch); err != nil {
+		t.Fatalf("SaveGeneratedBy: %v", err)
+	}
+
+	r, err := Load(tmp)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if r.GeneratedBy.Tool != "codex" {
+		t.Errorf("tool = %q, want %q", r.GeneratedBy.Tool, "codex")
+	}
+	if r.GeneratedBy.SessionID != "thread-019e9ff6" {
+		t.Errorf("session_id = %q, want %q", r.GeneratedBy.SessionID, "thread-019e9ff6")
+	}
+	// Fields we did not patch must survive.
+	if r.GeneratedBy.Skill != "review-pr" || r.GeneratedBy.Model != "claude-opus-4-7" {
+		t.Errorf("untouched fields clobbered: %+v", r.GeneratedBy)
+	}
+	// Comments must remain loadable and unchanged.
+	if len(r.Comments) != 6 {
+		t.Errorf("comments count = %d, want 6", len(r.Comments))
+	}
+}
+
+func TestSaveGeneratedByEmptyPatchIsNoOp(t *testing.T) {
+	t.Parallel()
+	tmp := filepath.Join(t.TempDir(), "pr-1")
+	copyDir(t, "testdata/pr-1", tmp)
+	before, err := os.ReadFile(filepath.Join(tmp, "review.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveGeneratedBy(tmp, GeneratedByPatch{}); err != nil {
+		t.Fatalf("SaveGeneratedBy empty: %v", err)
+	}
+	after, err := os.ReadFile(filepath.Join(tmp, "review.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("review.yml mutated by empty patch")
+	}
+}
+
 func TestSaveSessionIDEmptyIsNoOp(t *testing.T) {
 	t.Parallel()
 	tmp := filepath.Join(t.TempDir(), "pr-1")

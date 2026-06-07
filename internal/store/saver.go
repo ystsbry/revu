@@ -92,6 +92,81 @@ func SaveSessionID(reviewDir, sessionID string) error {
 	return atomicWrite(path, out, 0o644)
 }
 
+// GeneratedByPatch is the set of generated_by fields SaveGeneratedBy can
+// patch. Empty fields are left untouched.
+type GeneratedByPatch struct {
+	Tool      string
+	Skill     string
+	Model     string
+	SessionID string
+}
+
+// SaveGeneratedBy patches review.yml under reviewDir so the given
+// generated_by fields are set. Implemented as a targeted yaml.Node edit
+// like SaveSessionID, so the rest of the file is left untouched. An empty
+// field is a no-op for that field; if all four fields are empty, the call
+// is a complete no-op.
+func SaveGeneratedBy(reviewDir string, patch GeneratedByPatch) error {
+	if patch.Tool == "" && patch.Skill == "" && patch.Model == "" && patch.SessionID == "" {
+		return nil
+	}
+	if reviewDir == "" {
+		return errors.New("reviewDir is required")
+	}
+	path := filepath.Join(reviewDir, "review.yml")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+
+	var root yaml.Node
+	if err := yaml.Unmarshal(raw, &root); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	doc := mappingNode(&root)
+	if doc == nil {
+		return fmt.Errorf("%s: top-level is not a mapping", path)
+	}
+	gen := childNode(doc, "generated_by")
+	if gen == nil {
+		gen = &yaml.Node{Kind: yaml.MappingNode}
+		doc.Content = append(doc.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "generated_by"},
+			gen,
+		)
+	}
+	if gen.Kind != yaml.MappingNode {
+		return fmt.Errorf("%s: generated_by is not a mapping", path)
+	}
+
+	setField := func(key, value string) {
+		if value == "" {
+			return
+		}
+		if existing := childNode(gen, key); existing != nil {
+			existing.Kind = yaml.ScalarNode
+			existing.Tag = ""
+			existing.Style = 0
+			existing.Value = value
+			return
+		}
+		gen.Content = append(gen.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: key},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: value},
+		)
+	}
+	setField("tool", patch.Tool)
+	setField("skill", patch.Skill)
+	setField("model", patch.Model)
+	setField("session_id", patch.SessionID)
+
+	out, err := yaml.Marshal(&root)
+	if err != nil {
+		return fmt.Errorf("marshal %s: %w", path, err)
+	}
+	return atomicWrite(path, out, 0o644)
+}
+
 // mappingNode returns the document's mapping node, unwrapping a top-level
 // DocumentNode if present.
 func mappingNode(n *yaml.Node) *yaml.Node {
