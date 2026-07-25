@@ -33,10 +33,12 @@ func newGuidelinesPathsCmd() *cobra.Command {
 		Use:   "paths",
 		Short: "Print existing guideline files, one absolute path per line",
 		Long: `Emits one absolute path per line for every configured guideline whose
-file currently exists. Missing entries are silently skipped, so callers
-can wrap the output in a Read loop without extra checks:
-
-  mapfile -t GUIDELINES < <(revu guidelines paths 2>/dev/null)`,
+file currently exists. Missing entries are silently skipped and an empty
+result exits 0, so callers can read the output line by line without extra
+checks. Agent callers should invoke it as a bare command rather than
+wrapping it in a substitution: permission allowlists match on the leading
+command name, so "mapfile -t X < <(revu guidelines paths)" is not
+recognized as a revu invocation and gets denied.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			paths, err := guideline.Paths()

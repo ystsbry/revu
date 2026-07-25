@@ -256,6 +256,15 @@ func LatestReviewDirForPR(slug string, pr int) (string, error) {
 // to cwd). Otherwise, the current repository's git origin is read and the
 // latest reviewed pr-* directory (one that contains review.yml) under
 // ~/.revu/{owner}/{repo}/ is returned.
+//
+// Because reviews live one level below pr-{N}/ (in a {sha[:7]}/ subdir), a
+// caller that knows the PR number but not the head_sha can pass the pr-{N}/
+// parent and get the most recently written SHA subdir back. Non-interactive
+// callers such as the claude-review workflow rely on this: they only know the
+// PR number, and the head_sha is picked up inside the skill subprocess.
+//
+// A directory that holds neither a review.yml nor any {sha}/review.yml is
+// returned unchanged, so the caller's own loader reports the missing file.
 func ResolveReviewDir(arg string) (string, error) {
 	if arg != "" {
 		abs, err := filepath.Abs(arg)
@@ -268,6 +277,11 @@ func ResolveReviewDir(arg string) (string, error) {
 		}
 		if !st.IsDir() {
 			return "", fmt.Errorf("review path %s is not a directory", abs)
+		}
+		if _, err := os.Stat(filepath.Join(abs, "review.yml")); err != nil {
+			if picked, ok := latestReviewedSHADir(abs); ok {
+				return picked.Path, nil
+			}
 		}
 		return abs, nil
 	}
