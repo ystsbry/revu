@@ -488,9 +488,16 @@ func (a *App) IsDetail() bool  { return a.state == viewDetail }
 func (a *App) IsSummary() bool { return a.state == viewSummary }
 func (a *App) IsEdit() bool    { return a.state == viewEdit }
 
+// NewProgram builds the review TUI's bubbletea program. Kept separate from
+// Run so a caller that already owns the terminal — the dashboard, which
+// hosts App as one screen on its stack — can reach the model via NewApp
+// without starting a second program against the same tty.
+func NewProgram(cfg Config) *tea.Program {
+	return tea.NewProgram(NewApp(cfg), tea.WithAltScreen())
+}
+
 // Run starts the bubbletea program.
 func Run(cfg Config) error {
-	p := tea.NewProgram(NewApp(cfg), tea.WithAltScreen())
-	_, err := p.Run()
+	_, err := NewProgram(cfg).Run()
 	return err
 }
