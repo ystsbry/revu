@@ -25,12 +25,12 @@ type StateQuerier interface {
 
 // Entry is one row of the plan.
 type Entry struct {
-	Number          int    // PR number
-	State           string // OPEN/CLOSED/MERGED, or "" when querying failed
-	Path            string // absolute pr-N directory
-	HasUnsubmitted  bool   // any {sha}/review.yml under this PR lacks submitted_at
-	SHADirCount     int    // number of {sha}/review.yml dirs under pr-N/
-	QueryErr        error  // non-nil when PRState failed
+	Number         int    // PR number
+	State          string // OPEN/CLOSED/MERGED, or "" when querying failed
+	Path           string // absolute pr-N directory
+	HasUnsubmitted bool   // any {sha}/review.yml under this PR lacks submitted_at
+	SHADirCount    int    // number of {sha}/review.yml dirs under pr-N/
+	QueryErr       error  // non-nil when PRState failed
 }
 
 // Plan classifies pr-N directories under repoDir into delete / keep / error
@@ -59,7 +59,7 @@ func Build(ctx context.Context, querier StateQuerier, opts BuildOptions) (*Plan,
 		return nil, errors.New("RepoDir is required")
 	}
 	if opts.Slug == "" {
-		return nil, errors.New("Slug is required")
+		return nil, errors.New("slug is required")
 	}
 	if querier == nil {
 		return nil, errors.New("querier is required")

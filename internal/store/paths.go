@@ -170,9 +170,9 @@ func latestReviewedSHADir(prDir string) (ReviewedPRDir, bool) {
 		return ReviewedPRDir{}, false
 	}
 	var (
-		best     ReviewedPRDir
-		bestMod  int64
-		bestSet  bool
+		best    ReviewedPRDir
+		bestMod int64
+		bestSet bool
 	)
 	for _, s := range subs {
 		if !s.IsDir() {
