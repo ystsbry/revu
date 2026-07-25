@@ -61,10 +61,12 @@ jobs:
             この PR (#${{ github.event.issue.number }}, リポジトリ
             ${{ github.repository }}) を `review-pr` スキルでレビューしてください。
 
-            出力は ~/.revu/${{ github.repository }}/pr-${{ github.event.issue.number }}/
-            に review.yml / summary.md / comments/*.md を生成するだけにし、
-            GitHub への投稿（gh pr review 等）は **絶対に行わないでください**。
-            投稿はこのワークフローの後段ステップで `revu submit --yes` が担当します。
+            出力先はスキルの規約に従ってください（`revu pr prepare` が返す
+            review_dir 配下）。このワークフローが出力先を指定することはありません。
+
+            レビュー成果物の生成だけを行い、GitHub への投稿（gh pr review 等）は
+            **絶対に行わないでください**。投稿はこのワークフローの後段ステップで
+            `revu submit --yes` が担当します。
 
             日本語で出力してください。
           claude_args: >
@@ -74,9 +76,22 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # スキルの出力先は pr-{N}/{sha[:7]}/ で、head_sha はスキルの
+          # サブプロセスの中でしか判明しない。ここでは pr-{N} の親を渡し、
+          # 最新の {sha}/review.yml への降下は revu submit 側に任せる。
           dir="$HOME/.revu/${{ github.repository }}/pr-${{ github.event.issue.number }}"
-          if [ ! -f "$dir/review.yml" ]; then
-            echo "::error::review draft not found at $dir (claude が下書きを生成していない可能性があります)"
+          if [ ! -d "$dir" ]; then
+            echo "::error::$dir が存在しません（レビュー生成ステップが下書きを 1 つも書いていません）"
             exit 1
           fi
           revu submit --yes --accept-pending "$dir"
+
+      # 失敗したとき「生成されなかった」のか「置き場所が解決できなかった」のかを
+      # run のログだけで切り分けられるようにする。
+      - name: dump review draft layout on failure
+        if: failure()
+        run: |
+          dir="$HOME/.revu/${{ github.repository }}/pr-${{ github.event.issue.number }}"
+          echo "::group::contents of $dir"
+          ls -laR "$dir" || echo "(not found: $dir)"
+          echo "::endgroup::"

@@ -292,3 +292,68 @@ func TestResolveReviewDirExplicitPath(t *testing.T) {
 		t.Fatalf("file path should error")
 	}
 }
+
+// A caller that knows only the PR number (the claude-review workflow) passes
+// pr-{N}/ and must land on the {sha[:7]}/ subdir the skill actually wrote.
+func TestResolveReviewDirDescendsIntoSHADir(t *testing.T) {
+	repoDir := t.TempDir()
+	want := mkReviewed(t, repoDir, 15, "abc1234", time.Time{})
+
+	got, err := ResolveReviewDir(filepath.Join(repoDir, "pr-15"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestResolveReviewDirDescendsIntoLatestSHADir(t *testing.T) {
+	repoDir := t.TempDir()
+	older := time.Now().Add(-2 * time.Hour)
+	newer := time.Now().Add(-5 * time.Minute)
+	mkReviewed(t, repoDir, 15, "0000111", older)
+	want := mkReviewed(t, repoDir, 15, "2222333", newer)
+
+	got, err := ResolveReviewDir(filepath.Join(repoDir, "pr-15"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("got %q want %q (newest review.yml should win)", got, want)
+	}
+}
+
+// A directory that already holds a review.yml is the review dir itself; the
+// descent must not second-guess an explicit path.
+func TestResolveReviewDirKeepsDirWithOwnReviewYML(t *testing.T) {
+	repoDir := t.TempDir()
+	shaDir := mkReviewed(t, repoDir, 15, "abc1234", time.Time{})
+
+	got, err := ResolveReviewDir(shaDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != shaDir {
+		t.Fatalf("got %q want %q", got, shaDir)
+	}
+}
+
+// No review.yml anywhere: return the path untouched so the loader is the one
+// that reports the missing draft.
+func TestResolveReviewDirWithoutAnyReviewYML(t *testing.T) {
+	repoDir := t.TempDir()
+	prDir := filepath.Join(repoDir, "pr-15", "abc1234")
+	if err := os.MkdirAll(prDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	arg := filepath.Join(repoDir, "pr-15")
+	got, err := ResolveReviewDir(arg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != arg {
+		t.Fatalf("got %q want %q", got, arg)
+	}
+}

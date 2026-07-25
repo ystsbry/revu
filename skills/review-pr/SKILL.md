@@ -58,7 +58,7 @@ revu pr prepare <PR_NUMBER>
   "base_branch": "main",
   "title": "...",
   "body": "...",
-  "review_dir": "/home/<user>/.revu/ystsbry/revu/pr-123"
+  "review_dir": "/home/<user>/.revu/ystsbry/revu/pr-123/abc1234"
 }
 ```
 
@@ -83,14 +83,20 @@ revu pr diff <PR_NUMBER>
 
 **解決手順（サマリ・インラインコメント共通）:**
 
-```bash
-# 1. revu に上書きの有無を尋ねる。終了コード 0 なら標準出力に絶対パスが返る。
-SUMMARY_TMPL=$(revu templates path summary.md.tmpl 2>/dev/null) \
-  || SUMMARY_TMPL="$HOME/.claude/skills/review-pr/templates/summary.md.tmpl"
+revu に上書きの有無を尋ねる。**それぞれ単独のコマンドとして実行すること**（変数代入・コマンド置換・`||` を使った複合コマンドにしない。実行環境の権限 allowlist はコマンド名の前方一致で判定されるため、`VAR=$(revu ...)` の形は `revu` として認識されず拒否される）:
 
-INLINE_TMPL=$(revu templates path inline-comment.md.tmpl 2>/dev/null) \
-  || INLINE_TMPL="$HOME/.claude/skills/review-pr/templates/inline-comment.md.tmpl"
+```bash
+revu templates path summary.md.tmpl
 ```
+
+```bash
+revu templates path inline-comment.md.tmpl
+```
+
+終了コード 0 なら標準出力に返った絶対パスがユーザー上書き。終了コード 1 なら上書きは無いので、skill 同梱の以下をそのまま使う:
+
+- `~/.claude/skills/review-pr/templates/summary.md.tmpl`
+- `~/.claude/skills/review-pr/templates/inline-comment.md.tmpl`
 
 `revu templates path` の探索順は（高優先 → 低優先）:
 
@@ -99,11 +105,9 @@ INLINE_TMPL=$(revu templates path inline-comment.md.tmpl 2>/dev/null) \
 3. `$REVU_TEMPLATES/<NAME>` — env が立っているとき
 4. `~/.config/revu/templates/<NAME>` — グローバル
 
-いずれにもヒットしなかったとき `revu templates path` は終了コード 1 を返すので、`||` で skill 同梱パスにフォールバックする。
-
 `revu` が `$PATH` に無い環境では skill 同梱（`~/.claude/skills/review-pr/templates/`）を直接使う。
 
-`Read` ツールで上記 `$SUMMARY_TMPL` / `$INLINE_TMPL` を読み込み、内容を構造ガイドとして以降の生成に使う。テンプレートはあくまで「お手本」。固定文字列の置換ではない。
+こうして決めた 2 つのパスを `Read` ツールで読み込み、内容を構造ガイドとして以降の生成に使う。テンプレートはあくまで「お手本」。固定文字列の置換ではない。
 
 ### 5. severity セットの解決
 
@@ -145,7 +149,7 @@ revu severities --json
 プロジェクト・チームが TOML 設定 (`[review] guidelines = [...]`) で追加のレビュー指針ファイル（コーディング規約、セキュリティチェックリスト、設計ガイド等）を指定している場合があるので、レビュー観点に取り込む。
 
 ```bash
-mapfile -t GUIDELINES < <(revu guidelines paths 2>/dev/null)
+revu guidelines paths
 ```
 
 `revu guidelines paths` は存在する絶対パスのみを 1 行 1 件で出力する（未設定や全て missing なら空）。このリストの各ファイルを `Read` ツールで読み、Step 7 のレビュー観点に **追加** で適用する:
