@@ -171,8 +171,8 @@ func TestBuildIgnoresUnreviewedPRDir(t *testing.T) {
 
 func TestExecuteRemovesOnlyDeleteEntries(t *testing.T) {
 	repoDir := t.TempDir()
-	writeReview(t, repoDir, 3, "aaaaaaa", true) // delete
-	writeReview(t, repoDir, 7, "bbbbbbb", true) // delete
+	writeReview(t, repoDir, 3, "aaaaaaa", true)  // delete
+	writeReview(t, repoDir, 7, "bbbbbbb", true)  // delete
 	writeReview(t, repoDir, 12, "ccccccc", true) // keep
 
 	plan := &Plan{

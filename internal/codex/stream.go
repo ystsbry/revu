@@ -40,9 +40,9 @@ func relayProgress(r io.Reader, w io.Writer) (string, error) {
 }
 
 type streamEvent struct {
-	Type     string      `json:"type"`
-	ThreadID string      `json:"thread_id,omitempty"`
-	Item     *streamItem `json:"item,omitempty"`
+	Type     string       `json:"type"`
+	ThreadID string       `json:"thread_id,omitempty"`
+	Item     *streamItem  `json:"item,omitempty"`
 	Usage    *streamUsage `json:"usage,omitempty"`
 
 	// Some codex builds attach a top-level `error` / `message` field on
@@ -74,9 +74,9 @@ type streamItem struct {
 }
 
 type streamUsage struct {
-	InputTokens          int `json:"input_tokens,omitempty"`
-	CachedInputTokens    int `json:"cached_input_tokens,omitempty"`
-	OutputTokens         int `json:"output_tokens,omitempty"`
+	InputTokens           int `json:"input_tokens,omitempty"`
+	CachedInputTokens     int `json:"cached_input_tokens,omitempty"`
+	OutputTokens          int `json:"output_tokens,omitempty"`
 	ReasoningOutputTokens int `json:"reasoning_output_tokens,omitempty"`
 }
 
