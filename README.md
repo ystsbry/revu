@@ -220,6 +220,7 @@ $ revu guidelines list
 | `revu export [dir] --format json` | 投稿ペイロードを JSON で標準出力（API は呼ばない） |
 | `revu submit [dir]` | 投稿フローを起動（`submit` タイプで明示確認） |
 | `revu submit --dry-run [dir]` | 投稿内容のプレビュー（API は呼ばない） |
+| `revu submit --no-approve [dir]` | `review_event: APPROVE` のレビューを COMMENT に降格して投稿（CI 向け。COMMENT / REQUEST_CHANGES は変わらない） |
 | `revu config` | 現在の設定を表示 |
 | `revu config --init` | スターター `config.toml` を書き出す |
 | `revu severities` | 有効な severity 一覧を表示（`--json` で機械可読出力、skill が利用） |
@@ -403,6 +404,21 @@ revu prune -y                    # 確認プロンプトをスキップ
 - review.yml の `head_sha` と PR の現 head が不一致（PR が更新されている）
 - `review.yml` に既に `submitted_at` が記録されている（再投稿）
 - 確認プロンプトで `submit` 以外を入力した
+
+### CI から投稿する場合（`--no-approve`）
+
+GitHub は Actions の `GITHUB_TOKEN` による PR 承認を禁じています。`review_event: APPROVE` のレビューをそのまま投稿すると HTTP 422（`GitHub Actions is not permitted to approve pull requests.`）で API 呼び出しごと失敗し、レビューが 1 件も残りません。指摘が nit / minor だけに収まった「出来のよい PR」ほどこの状態になります。
+
+`--no-approve` を付けると、APPROVE のレビューを COMMENT に降格して投稿します。
+
+```bash
+revu submit --yes --accept-pending --no-approve "$dir"
+```
+
+- COMMENT / REQUEST_CHANGES のレビューは何も変わりません（フラグを付けても投稿内容は同じ）
+- 降格したときは実行ログに `Downgraded review event: APPROVE -> COMMENT (--no-approve)` を出力し、投稿前プレビューの `Event:` 行も降格後の値（`COMMENT`）になります
+- 投稿されるレビュー本文（`summary.md` の内容）は書き換えません
+- 投稿成功時に `review.yml` へ書き戻される `review_event` は、実際に投稿した `COMMENT` になります
 
 ## ファイル構成
 
