@@ -14,10 +14,13 @@ permissions:
 jobs:
   actionlint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
       - name: Run actionlint
-        uses: docker://rhysd/actionlint:latest
+        # 明示的に固定する。`latest` だと actionlint 側の新リリースだけで
+        # ワークフローを変更していなくても CI が赤くなるため、更新は PR として入れる。
+        uses: docker://rhysd/actionlint:1.7.12
         with:
           args: -color

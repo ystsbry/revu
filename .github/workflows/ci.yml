@@ -12,6 +12,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # PR にカバレッジレポートを sticky comment として post するため、
     # この job だけ pull-requests: write を持たせる。
     permissions:
@@ -82,6 +83,7 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -93,10 +95,14 @@ jobs:
 
       - uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
+          # 明示的に固定する。`latest` だと golangci-lint 側の新リリースだけで
+          # コード変更なしに CI が赤くなるため、更新は PR として入れる。
+          # .golangci.yml は `version: "2"` なので v2 系を追う。
+          version: v2.12.2
 
   format:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -119,6 +125,7 @@ jobs:
   build:
     needs: [test, lint, format]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -144,6 +151,7 @@ jobs:
   build-make:
     needs: [test, lint, format]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 

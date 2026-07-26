@@ -27,6 +27,7 @@ permissions:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -53,7 +54,7 @@ jobs:
           # 1) Upsert: ローカルファイル -> GitHub に作成 or 更新
           for file in .github/rulesets/*.json; do
             name=$(jq -r .name "$file")
-            id=$(gh api "repos/${REPO}/rulesets" \
+            id=$(gh api --paginate "repos/${REPO}/rulesets" \
               --jq ".[] | select(.name == \"$name\") | .id" || true)
             if [ -z "$id" ]; then
               echo "Creating ruleset: $name"
@@ -65,6 +66,8 @@ jobs:
           done
 
           # 2) Delete: ローカルに対応ファイルが無い ruleset を GitHub から削除
+          #    ここは --paginate が特に重要。2 ページ目以降が列挙から漏れると、
+          #    その ruleset は「ローカルに無い」とすら判定されず取りこぼされる。
           local_names=()
           for f in .github/rulesets/*.json; do
             local_names+=("$(jq -r '.name' "$f")")
@@ -82,4 +85,4 @@ jobs:
               echo "Deleting ruleset: $name (id=$id)"
               gh api -X DELETE "repos/${REPO}/rulesets/$id"
             fi
-          done < <(gh api "repos/${REPO}/rulesets" --jq '.[] | "\(.id)\t\(.name)"')
+          done < <(gh api --paginate "repos/${REPO}/rulesets" --jq '.[] | "\(.id)\t\(.name)"')

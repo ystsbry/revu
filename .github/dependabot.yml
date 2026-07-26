@@ -1,0 +1,41 @@
+version: 2
+
+# 依存の更新を PR として自動で上げる。
+#
+# labels: を明示しているのは .github/labels.yml が唯一の真実だから。
+# 既定では Dependabot が `dependencies` に加えてエコシステム名のラベル
+# （`go` / `github_actions`）も自作するが、それらは labels.yml に無いため
+# sync-repo-config.yml の authoritative sync（delete-other-labels: true）で
+# 消され、次の PR でまた作られる、というチューンが起きる。
+# ここで使うラベルを labels.yml に定義済みのものだけに絞って回避する。
+
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - "type: build"
+    commit-message:
+      prefix: build
+      include: scope
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Tokyo
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - "type: ci"
+    commit-message:
+      prefix: ci
+      include: scope
