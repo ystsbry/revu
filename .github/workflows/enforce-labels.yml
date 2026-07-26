@@ -18,6 +18,7 @@ jobs:
     # 万一 PAT で操作された場合に備えて二重に弾く。
     if: github.event.sender.type == 'User'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 

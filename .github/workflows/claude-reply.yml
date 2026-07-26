@@ -23,6 +23,8 @@ jobs:
       contains(github.event.comment.body, '@claude-reply')
       && github.event.sender.type != 'Bot'
     runs-on: ubuntu-latest
+    # エージェントを起動する job なので、暴走・ハングしたときのコストを上限で抑える。
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:

@@ -64,6 +64,14 @@
   color: "c2e0c6"
   description: 優先度低
 
+# --- dependencies: Dependabot が付けるラベル ---
+# このファイルは delete-other-labels: true で同期されるため、Dependabot に
+# 勝手に作らせると sync のたびに消えて作り直される。ここで正式に定義し、
+# .github/dependabot.yml 側でも labels: に明示して管理下に置く。
+- name: "dependencies"
+  color: "0366d6"
+  description: 依存関係の更新
+
 # --- GitHub が UI 上で特別扱いするラベル（明示しないと sync で削除される） ---
 - name: "good first issue"
   color: "7057ff"
