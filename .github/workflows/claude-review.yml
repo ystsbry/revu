@@ -48,12 +48,16 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           make install-skills
 
+      # gh が動く環境かどうかの事前確認。submit が実際に使うのは後段で取得する
+      # Claude App のトークンなので、ここで見ているトークンとは別物である点に注意。
       - name: configure gh auth for revu pr / submit
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh auth status
 
       - name: generate review draft with claude (review-pr skill)
+        # 後段の submit で outputs.github_token（Claude App のトークン）を使うため id を付ける。
+        id: claude
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -76,7 +80,12 @@ jobs:
 
       - name: submit review with revu
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # レビューの投稿者名は「どのトークンで叩いたか」で決まる。GITHUB_TOKEN だと
+          # github-actions[bot] 名義になるため、claude-code-action が OIDC で取得した
+          # Claude App のトークンを使い、claude[bot] 名義で投稿する。
+          # App トークンが得られなかった場合、この output はワークフロートークンに
+          # フォールバックする（＝従来どおり github-actions[bot] 名義になるだけで失敗はしない）。
+          GH_TOKEN: ${{ steps.claude.outputs.github_token }}
         run: |
           # スキルの出力先は pr-{N}/{sha[:7]}/ で、head_sha はスキルの
           # サブプロセスの中でしか判明しない。ここでは pr-{N} の親を渡し、
@@ -86,8 +95,10 @@ jobs:
             echo "::error::$dir が存在しません（レビュー生成ステップが下書きを 1 つも書いていません）"
             exit 1
           fi
-          # --no-approve: Actions の GITHUB_TOKEN は PR を承認できない（HTTP 422）ため、
-          # APPROVE のレビューは COMMENT に降格して投稿する。
+          # --no-approve: APPROVE のレビューを COMMENT に降格して投稿する。
+          # 元々は「Actions の GITHUB_TOKEN は PR を承認できない（HTTP 422）」ための
+          # 措置で、App トークンに変えた今は不要になっている可能性がある。ただし
+          # 未検証なので当面は付けたままにする（外すなら実際に APPROVE を通してから）。
           revu submit --yes --accept-pending --no-approve "$dir"
 
       # 失敗したとき「生成されなかった」のか「置き場所が解決できなかった」のかを
