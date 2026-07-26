@@ -44,11 +44,24 @@ type Options struct {
 	// no human will triage comments in the TUI. Rejected comments are left
 	// untouched: rejection is an explicit signal that must be preserved.
 	AcceptPending bool
+	// NoApprove downgrades an APPROVE review to COMMENT before the payload is
+	// built. COMMENT and REQUEST_CHANGES reviews are left untouched, and the
+	// review body is never modified.
+	//
+	// Intended for CI: GitHub refuses to let the Actions GITHUB_TOKEN approve
+	// a pull request (HTTP 422), so a review that would otherwise be an
+	// approval cannot be posted at all.
+	//
+	// The downgrade mutates Review.ReviewEvent, so on success review.yml
+	// records COMMENT — the event that was actually posted, not the one the
+	// generating agent chose.
+	NoApprove bool
 }
 
 // Run executes the full submit flow:
 //
-//  1. Build the payload (validates & filters to accepted comments).
+//  1. Apply AcceptPending / NoApprove, then build the payload (validates &
+//     filters to accepted comments).
 //  2. Refuse if review.yml already has submitted_at.
 //  3. Confirm gh authentication (skipped in DryRun).
 //  4. Fetch the PR's current head_sha and refuse on mismatch (skipped in DryRun).
@@ -84,6 +97,12 @@ func Run(ctx context.Context, opts Options) error {
 				opts.Review.Comments[i].Status = model.StatusAccepted
 			}
 		}
+	}
+
+	if opts.NoApprove && opts.Review.ReviewEvent == model.EventApprove {
+		opts.Review.ReviewEvent = model.EventComment
+		fmt.Fprintf(opts.Out, "Downgraded review event: %s -> %s (--no-approve)\n\n",
+			model.EventApprove, model.EventComment)
 	}
 
 	payload, counts, err := github.BuildPayload(opts.Review)

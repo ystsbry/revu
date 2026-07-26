@@ -308,6 +308,177 @@ func TestSubmitAcceptPendingPromotesAndPosts(t *testing.T) {
 	}
 }
 
+// approveReview is sampleReview with the event the generating agent picked
+// when it found nothing worse than a nit.
+func approveReview() *model.Review {
+	r := sampleReview()
+	r.ReviewEvent = model.EventApprove
+	return r
+}
+
+func TestSubmitNoApproveDowngradesApprove(t *testing.T) {
+	t.Parallel()
+	r := approveReview()
+	var out bytes.Buffer
+	var posted github.Payload
+	client := &github.FakeClient{
+		PRHeadFunc: func(ctx context.Context, slug string, number int) (string, error) { return "abc1234", nil },
+		PostReviewFunc: func(ctx context.Context, slug string, number int, p github.Payload) (int64, error) {
+			posted = p
+			return 7, nil
+		},
+	}
+
+	var saved *model.Review
+	err := Run(context.Background(), Options{
+		Review:    r,
+		Client:    client,
+		Saver:     func(rr *model.Review) error { saved = rr; return nil },
+		Now:       fixedNow,
+		Out:       &out,
+		Yes:       true,
+		NoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if posted.Event != string(model.EventComment) {
+		t.Errorf("posted event = %q, want COMMENT", posted.Event)
+	}
+	if posted.Body != "the summary" {
+		t.Errorf("posted body = %q, want the untouched summary (the downgrade must not edit it)", posted.Body)
+	}
+	if !strings.Contains(out.String(), "Downgraded review event: APPROVE -> COMMENT (--no-approve)") {
+		t.Errorf("downgrade not reported on stdout:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "Event:           COMMENT") {
+		t.Errorf("preview must show the event actually posted:\n%s", out.String())
+	}
+	if saved == nil {
+		t.Fatal("saver not invoked")
+	}
+	// review.yml records what was posted, not what the agent originally chose.
+	if saved.ReviewEvent != model.EventComment {
+		t.Errorf("saved review_event = %q, want COMMENT", saved.ReviewEvent)
+	}
+}
+
+func TestSubmitNoApproveLeavesOtherEventsUntouched(t *testing.T) {
+	t.Parallel()
+	for _, event := range []model.ReviewEvent{model.EventComment, model.EventRequestChanges} {
+		t.Run(string(event), func(t *testing.T) {
+			t.Parallel()
+			r := sampleReview()
+			r.ReviewEvent = event
+			var out bytes.Buffer
+			var posted github.Payload
+			client := &github.FakeClient{
+				PRHeadFunc: func(ctx context.Context, slug string, number int) (string, error) { return "abc1234", nil },
+				PostReviewFunc: func(ctx context.Context, slug string, number int, p github.Payload) (int64, error) {
+					posted = p
+					return 7, nil
+				},
+			}
+
+			var saved *model.Review
+			err := Run(context.Background(), Options{
+				Review:    r,
+				Client:    client,
+				Saver:     func(rr *model.Review) error { saved = rr; return nil },
+				Now:       fixedNow,
+				Out:       &out,
+				Yes:       true,
+				NoApprove: true,
+			})
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if posted.Event != string(event) {
+				t.Errorf("posted event = %q, want %q", posted.Event, event)
+			}
+			if posted.Body != "the summary" {
+				t.Errorf("posted body = %q, want the untouched summary", posted.Body)
+			}
+			if strings.Contains(out.String(), "Downgraded review event") {
+				t.Errorf("nothing was downgraded, but stdout says otherwise:\n%s", out.String())
+			}
+			if saved == nil {
+				t.Fatal("saver not invoked")
+			}
+			if saved.ReviewEvent != event {
+				t.Errorf("saved review_event = %q, want %q", saved.ReviewEvent, event)
+			}
+		})
+	}
+}
+
+func TestSubmitApprovePostedAsIsWithoutFlag(t *testing.T) {
+	t.Parallel()
+	r := approveReview()
+	var out bytes.Buffer
+	var posted github.Payload
+	client := &github.FakeClient{
+		PRHeadFunc: func(ctx context.Context, slug string, number int) (string, error) { return "abc1234", nil },
+		PostReviewFunc: func(ctx context.Context, slug string, number int, p github.Payload) (int64, error) {
+			posted = p
+			return 7, nil
+		},
+	}
+
+	var saved *model.Review
+	err := Run(context.Background(), Options{
+		Review: r,
+		Client: client,
+		Saver:  func(rr *model.Review) error { saved = rr; return nil },
+		Now:    fixedNow,
+		Out:    &out,
+		Yes:    true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if posted.Event != string(model.EventApprove) {
+		t.Errorf("posted event = %q, want APPROVE without --no-approve", posted.Event)
+	}
+	if posted.Body != "the summary" {
+		t.Errorf("posted body = %q, want the untouched summary", posted.Body)
+	}
+	if strings.Contains(out.String(), "Downgraded review event") {
+		t.Errorf("downgrade must not happen without the flag:\n%s", out.String())
+	}
+	if saved == nil {
+		t.Fatal("saver not invoked")
+	}
+	if saved.ReviewEvent != model.EventApprove {
+		t.Errorf("saved review_event = %q, want APPROVE", saved.ReviewEvent)
+	}
+}
+
+func TestSubmitNoApproveDryRunPreviewsDowngrade(t *testing.T) {
+	t.Parallel()
+	r := approveReview()
+	var out bytes.Buffer
+
+	err := Run(context.Background(), Options{
+		Review:    r,
+		Out:       &out,
+		DryRun:    true,
+		NoApprove: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(out.String(), "Downgraded review event: APPROVE -> COMMENT (--no-approve)") {
+		t.Errorf("downgrade not reported on dry-run:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "Event:           COMMENT") {
+		t.Errorf("dry-run preview must show the downgraded event:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "dry-run: not submitted") {
+		t.Errorf("dry-run marker missing:\n%s", out.String())
+	}
+}
+
 func TestSubmitDryRunDoesNotCheckHead(t *testing.T) {
 	t.Parallel()
 	r := sampleReview()

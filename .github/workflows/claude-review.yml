@@ -84,7 +84,9 @@ jobs:
             echo "::error::$dir が存在しません（レビュー生成ステップが下書きを 1 つも書いていません）"
             exit 1
           fi
-          revu submit --yes --accept-pending "$dir"
+          # --no-approve: Actions の GITHUB_TOKEN は PR を承認できない（HTTP 422）ため、
+          # APPROVE のレビューは COMMENT に降格して投稿する。
+          revu submit --yes --accept-pending --no-approve "$dir"
 
       # 失敗したとき「生成されなかった」のか「置き場所が解決できなかった」のかを
       # run のログだけで切り分けられるようにする。
