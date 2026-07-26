@@ -37,7 +37,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -76,6 +76,12 @@ jobs:
 
       - name: submit review with revu
         env:
+          # claude-code-action の outputs.github_token（Claude App のトークン）は
+          # ここでは使えない。アクションは composite action の最後に "Revoke app token"
+          # ステップを持ち、自分の App トークンを失効させてから終了する。後続ステップに
+          # 渡る頃には死んでおり、gh auth status が "The token in GH_TOKEN is invalid" で
+          # 落ちる（PR #26 で実際に発生。run 30184892810）。
+          # レビューを revu[bot] 名義で投稿したい場合は自前の GitHub App が必要（REVU-32）。
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # スキルの出力先は pr-{N}/{sha[:7]}/ で、head_sha はスキルの
