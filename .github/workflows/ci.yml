@@ -74,7 +74,7 @@ jobs:
 
       - name: post coverage comment on PR
         if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: coverage
           message: |
@@ -93,7 +93,7 @@ jobs:
           # golangci-lint-action 側で独自にキャッシュするため、ここでは無効化する。
           cache: false
 
-      - uses: golangci/golangci-lint-action@v8
+      - uses: golangci/golangci-lint-action@v9
         with:
           # 明示的に固定する。`latest` だと golangci-lint 側の新リリースだけで
           # コード変更なしに CI が赤くなるため、更新は PR として入れる。
