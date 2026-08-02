@@ -154,6 +154,45 @@ skill 内で使われる revu サブコマンドは:
 | `revu now` | ISO 8601 タイムスタンプ |
 | `revu validate <dir>` | 生成物のスキーマ整合性チェック |
 
+## 非対話モード（CI / 自動化から呼ぶ）
+
+既定の `revu review` はレビュー生成後に必ずエージェントの対話 TUI へ入るため、CI やバックグラウンドワーカーからは端末を掴んだまま戻ってきません。`--no-resume` を付けると **生成が終わった時点でプロセスが終了** します。
+
+```bash
+# 生成して終了。どこに出力されたかを人間が読める形で表示
+revu review 42 --no-resume
+
+# 生成して終了。結果を JSON で標準出力（進捗は標準エラーへ）
+revu review 42 --codex --no-resume --json
+```
+
+`--json` の出力:
+
+```json
+{
+  "engine": "codex",
+  "repo": "ystsbry/revu",
+  "pr": 42,
+  "out_dir": "/home/you/.revu/ystsbry/revu/pr-42/a1b2c3d",
+  "session_id": "0199..."
+}
+```
+
+このフィールド名は消費側との契約なので、互換性を保って変更します。`session_id` は `--codex` のとき codex の `thread_id` が入ります（`review.yml` の `generated_by` と同じ扱い）。
+
+| 挙動 | 内容 |
+|---|---|
+| `--json` は `--no-resume` が必須 | 結果 JSON を出した直後に端末をエージェントへ渡すと、呼び出し側が標準出力を追えなくなるため |
+| PR 番号は必須 | 非対話モードでは対話ピッカーへ落ちず、番号を省略すると明確なエラーで終了する |
+| 標準出力の分離 | `--json` のときは結果 JSON のみが標準出力に出る。エージェントの進捗・revu のステータス行・警告・エージェント自身の stderr はすべて標準エラーへ |
+| stdin | エージェントには空の stdin を渡すため、TTY の無い環境でも入力待ちでハングしない |
+| 失敗時 | レビューが生成されなかった場合は非ゼロで終了する。**今回の実行で書かれていないレビュー dir は「不在」として扱う**ので、過去の実行結果を新しい成果物として掴むことはない |
+| `generated_by` | `tool` / `session_id` の review.yml への書き戻しは resume の有無に関わらず従来どおり行われる |
+
+**対象リポジトリは cwd の git remote から解決されます。** `revu pr prepare` も `gh` も `codex --cd` も cwd を対象にするため、CI は必ず checkout の中から `revu` を呼んでください（`--repo` のようなフラグは、実際にレビューされるリポジトリを変えられないので用意していません）。
+
+既定の `revu review`（フラグなし）の挙動は従来から変わりません。
+
 ## テンプレートのカスタマイズ
 
 `review-pr` skill が生成するサマリとインラインコメントの構造はテンプレートで決まっています。デフォルトは `~/.claude/skills/review-pr/templates/` 配下:
@@ -213,6 +252,8 @@ $ revu guidelines list
 | `revu version` | バージョン表示 |
 | `revu review [PR_NUMBER]` | 自分にレビュー依頼が来ている PR を選び、`claude` CLI で `/review-pr` を実行して生成された結果を TUI で開く |
 | `revu review [PR_NUMBER] --codex` | 同上だが `claude` の代わりに `codex` CLI で `$review-pr` skill を起動（`scripts/install-codex.sh` で skill のインストールが必要） |
+| `revu review PR_NUMBER --no-resume` | レビューを生成した時点で終了し、対話 TUI に入らない（[非対話モード](#非対話モードci--自動化から呼ぶ)） |
+| `revu review PR_NUMBER --no-resume --json` | 同上で、結果を JSON で標準出力（進捗は標準エラーへ） |
 | `revu validate [dir]` | review.yml と Markdown の整合性チェック |
 | `revu status [dir]` | accept/reject の集計、submit 状況を表示 |
 | `revu open [dir]` | TUI を起動（cwd の git remote が review.PR.Repo と一致する必要あり） |
