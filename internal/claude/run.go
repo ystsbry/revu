@@ -10,10 +10,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/ystsbry/revu/internal/store"
 )
@@ -39,6 +41,23 @@ type ReviewArgs struct {
 	// Bin overrides the resolved claude binary path. Empty falls back to
 	// "claude" on PATH.
 	Bin string
+
+	// Progress receives the human-readable relay of claude's stream-json
+	// output. nil falls back to os.Stdout, which is what interactive
+	// callers want. Non-interactive callers point this at stderr so
+	// stdout stays clean for machine-readable output.
+	Progress io.Writer
+
+	// Stdin is handed to the claude process. nil falls back to os.Stdin so
+	// interactive runs keep terminal passthrough. Non-interactive callers
+	// pass an empty reader so claude can never block waiting for input.
+	Stdin io.Reader
+
+	// NotBefore rejects a review directory whose review.yml predates it,
+	// so a run that produced nothing fails instead of returning the
+	// previous run's output. Zero means "accept the newest review dir
+	// regardless of age" — see store.LatestReviewDirForPRSince.
+	NotBefore time.Time
 }
 
 // ReviewResult is what RunReviewPR returns on success.
@@ -110,7 +129,10 @@ func RunReviewPR(ctx context.Context, args ReviewArgs) (ReviewResult, error) {
 		"--verbose",
 		"--print", prompt,
 	)
-	cmd.Stdin = os.Stdin
+	// The child's stderr and the relay's own diagnostics stay on
+	// os.Stderr on purpose: only stdout is a machine-readable channel for
+	// non-interactive callers, and they want claude's own errors visible.
+	cmd.Stdin = resolveStdin(args.Stdin)
 	cmd.Stderr = os.Stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -119,7 +141,7 @@ func RunReviewPR(ctx context.Context, args ReviewArgs) (ReviewResult, error) {
 	if err := cmd.Start(); err != nil {
 		return ReviewResult{}, fmt.Errorf("claude --print %q: start: %w", prompt, err)
 	}
-	sessionID, relayErr := relayProgress(stdout, os.Stdout)
+	sessionID, relayErr := relayProgress(stdout, resolveProgress(args.Progress))
 	if relayErr != nil {
 		// Don't fail the whole run on a broken stream — wait for the
 		// process to exit and surface its real status.
@@ -132,11 +154,27 @@ func RunReviewPR(ctx context.Context, args ReviewArgs) (ReviewResult, error) {
 	// The skill writes to ~/.revu/{owner}/{repo}/pr-{N}/{sha[:7]}/. We don't
 	// know head_sha here without re-running gh, so discover the SHA dir by
 	// picking the most recently written review under pr-{N}/.
-	out, err := store.LatestReviewDirForPR(args.OwnerRepo, args.PRNumber)
+	out, err := store.LatestReviewDirForPRSince(args.OwnerRepo, args.PRNumber, args.NotBefore)
 	if err != nil {
 		return ReviewResult{}, fmt.Errorf("locate review dir after claude run (claude may have failed silently): %w", err)
 	}
 	return ReviewResult{OutDir: out, SessionID: sessionID}, nil
+}
+
+// resolveProgress returns w, or os.Stdout when the caller left it unset.
+func resolveProgress(w io.Writer) io.Writer {
+	if w == nil {
+		return os.Stdout
+	}
+	return w
+}
+
+// resolveStdin returns r, or os.Stdin when the caller left it unset.
+func resolveStdin(r io.Reader) io.Reader {
+	if r == nil {
+		return os.Stdin
+	}
+	return r
 }
 
 // ResumeArgs configures a `claude --resume` invocation.

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Home returns the revu home directory.
@@ -239,6 +240,19 @@ func ListPRNumbers(repoDir string) ([]int, error) {
 // the caller knows the PR number but not the head_sha used to write the
 // review (e.g. the skill subprocess picked it up via `revu pr prepare`).
 func LatestReviewDirForPR(slug string, pr int) (string, error) {
+	return LatestReviewDirForPRSince(slug, pr, time.Time{})
+}
+
+// LatestReviewDirForPRSince behaves like LatestReviewDirForPR, but treats a
+// review.yml written before `since` as if it were absent.
+//
+// "Most recently written" alone cannot tell "the agent just wrote this" from
+// "this is left over from last week", so a run that produced nothing would
+// otherwise hand the caller a stale review and report success. Interactive
+// users notice; a CI job or a background worker does not. Non-interactive
+// callers therefore pass the time their run started. A zero `since` disables
+// the check and keeps the original behaviour.
+func LatestReviewDirForPRSince(slug string, pr int, since time.Time) (string, error) {
 	parent, err := PRDir(slug, pr)
 	if err != nil {
 		return "", err
@@ -246,6 +260,20 @@ func LatestReviewDirForPR(slug string, pr int) (string, error) {
 	picked, ok := latestReviewedSHADir(parent)
 	if !ok {
 		return "", fmt.Errorf("no {sha}/review.yml under %s", parent)
+	}
+	if since.IsZero() {
+		return picked.Path, nil
+	}
+	// picked is the newest review.yml under parent, so if it predates the
+	// run, nothing was written during it.
+	st, err := os.Stat(filepath.Join(picked.Path, "review.yml"))
+	if err != nil {
+		return "", fmt.Errorf("stat review.yml under %s: %w", picked.Path, err)
+	}
+	if st.ModTime().Before(since) {
+		return "", fmt.Errorf(
+			"no review was generated for this run: the newest review under %s is from %s, before the run started at %s",
+			parent, st.ModTime().Format(time.RFC3339), since.Format(time.RFC3339))
 	}
 	return picked.Path, nil
 }
