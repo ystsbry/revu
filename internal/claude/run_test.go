@@ -91,7 +91,7 @@ func TestRunReviewPRRoutesProgressAndStdin(t *testing.T) {
 		Progress:  &progress,
 		Stdin:     strings.NewReader("hello from the caller\n"),
 	})
-	w.Close()
+	_ = w.Close()
 	os.Stdout = realStdout
 
 	var leaked bytes.Buffer

@@ -235,6 +235,12 @@ func ListPRNumbers(repoDir string) ([]int, error) {
 	return out, nil
 }
 
+// mtimeSkewTolerance absorbs the gap between time.Now() and the coarse
+// clock the kernel uses to stamp file mtimes (a tick, so single-digit
+// milliseconds in practice). Two seconds is far more than that and far less
+// than the age of a review left over from an earlier run.
+const mtimeSkewTolerance = 2 * time.Second
+
 // LatestReviewDirForPR returns the most recently written {sha}/review.yml dir
 // under ~/.revu/{owner}/{repo}/pr-{pr}/. Useful right after a review run when
 // the caller knows the PR number but not the head_sha used to write the
@@ -252,6 +258,11 @@ func LatestReviewDirForPR(slug string, pr int) (string, error) {
 // users notice; a CI job or a background worker does not. Non-interactive
 // callers therefore pass the time their run started. A zero `since` disables
 // the check and keeps the original behaviour.
+//
+// The comparison is slack by mtimeSkewTolerance: the kernel stamps mtimes
+// from a coarse cached clock, so a file written moments after time.Now() can
+// carry an earlier timestamp. The slack is milliseconds-to-seconds while the
+// staleness we care about is minutes-to-days, so it costs nothing.
 func LatestReviewDirForPRSince(slug string, pr int, since time.Time) (string, error) {
 	parent, err := PRDir(slug, pr)
 	if err != nil {
@@ -270,7 +281,7 @@ func LatestReviewDirForPRSince(slug string, pr int, since time.Time) (string, er
 	if err != nil {
 		return "", fmt.Errorf("stat review.yml under %s: %w", picked.Path, err)
 	}
-	if st.ModTime().Before(since) {
+	if st.ModTime().Before(since.Add(-mtimeSkewTolerance)) {
 		return "", fmt.Errorf(
 			"no review was generated for this run: the newest review under %s is from %s, before the run started at %s",
 			parent, st.ModTime().Format(time.RFC3339), since.Format(time.RFC3339))
