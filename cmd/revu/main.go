@@ -23,7 +23,12 @@ func main() {
 	}
 }
 
-func newRootCmd() *cobra.Command {
+func newRootCmd() *cobra.Command { return newRootCmdWith(defaultReviewDeps()) }
+
+// newRootCmdWith builds the root command with `revu review`'s outward-facing
+// calls injected, so tests can drive the whole command tree — including the
+// root's SilenceUsage, which is what keeps cobra's usage dump off stdout.
+func newRootCmdWith(reviewCmdDeps reviewDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "revu",
 		Short:         "Review viewer & GitHub submission agent for Claude Code generated reviews",
@@ -42,7 +47,7 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newSubmitCmd())
 	cmd.AddCommand(newConfigCmd())
 	cmd.AddCommand(newSeveritiesCmd())
-	cmd.AddCommand(newReviewCmd())
+	cmd.AddCommand(newReviewCmdWith(reviewCmdDeps))
 	cmd.AddCommand(newResumeCmd())
 	cmd.AddCommand(newPRCmd())
 	cmd.AddCommand(newNowCmd())

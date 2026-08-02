@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -23,6 +24,26 @@ const (
 	engineCodex  reviewEngine = "codex"
 )
 
+// reviewDeps are the outward-facing calls `revu review` makes. They are
+// injected rather than referenced directly so tests can drive the command
+// without launching an agent CLI — and without mutating package state,
+// which would make the tests unsafe to run in parallel.
+type reviewDeps struct {
+	runClaude func(context.Context, claude.ReviewArgs) (claude.ReviewResult, error)
+	runCodex  func(context.Context, codex.ReviewArgs) (codex.ReviewResult, error)
+	resume    func(ctx context.Context, out io.Writer, engine reviewEngine, sessionID string) error
+	cwdSlug   func() (string, error)
+}
+
+func defaultReviewDeps() reviewDeps {
+	return reviewDeps{
+		runClaude: claude.RunReviewPR,
+		runCodex:  codex.RunReviewPR,
+		resume:    resumeReviewSession,
+		cwdSlug:   store.CurrentRepoSlug,
+	}
+}
+
 // resolveReviewEngine picks an engine from the mutually exclusive
 // --claude / --codex flags. Default is claude for backward compatibility.
 func resolveReviewEngine(useClaude, useCodex bool) (reviewEngine, error) {
@@ -35,7 +56,9 @@ func resolveReviewEngine(useClaude, useCodex bool) (reviewEngine, error) {
 	return engineClaude, nil
 }
 
-func newReviewCmd() *cobra.Command {
+func newReviewCmd() *cobra.Command { return newReviewCmdWith(defaultReviewDeps()) }
+
+func newReviewCmdWith(deps reviewDeps) *cobra.Command {
 	var (
 		focus     string
 		useClaude bool
@@ -70,7 +93,7 @@ the review later, run "revu open" (revu TUI) or "revu resume" (agent TUI).`,
 				return err
 			}
 
-			slug, err := store.CurrentRepoSlug()
+			slug, err := deps.cwdSlug()
 			if err != nil {
 				return fmt.Errorf("resolve cwd repo: %w (run revu review inside a git clone)", err)
 			}
@@ -80,7 +103,12 @@ the review later, run "revu open" (revu TUI) or "revu resume" (agent TUI).`,
 				return err
 			}
 
-			return runReview(ctx, cmd, engine, slug, prNumber, focus)
+			return deps.runReview(ctx, cmd, reviewOptions{
+				Engine:   engine,
+				Slug:     slug,
+				PRNumber: prNumber,
+				Focus:    focus,
+			})
 		},
 	}
 	cmd.Flags().StringVar(&focus, "focus", "", "categories to focus on, passed through to /review-pr (e.g. \"security,perf\")")
@@ -121,58 +149,127 @@ func resolvePRNumber(ctx context.Context, cmd *cobra.Command, args []string, slu
 	return picked.Number, nil
 }
 
-func runReview(ctx context.Context, cmd *cobra.Command, engine reviewEngine, slug string, prNumber int, focus string) error {
-	switch engine {
+// reviewOptions is one resolved `revu review` invocation.
+type reviewOptions struct {
+	Engine   reviewEngine
+	Slug     string
+	PRNumber int
+	Focus    string
+}
+
+func (deps reviewDeps) runReview(ctx context.Context, cmd *cobra.Command, opts reviewOptions) error {
+	res, err := deps.generateReview(ctx, reviewGenOptions{
+		Engine:   opts.Engine,
+		Slug:     opts.Slug,
+		PRNumber: opts.PRNumber,
+		Focus:    opts.Focus,
+		Progress: cmd.OutOrStdout(),
+		Warn:     cmd.ErrOrStderr(),
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "\nReview generated at %s\n", res.OutDir)
+	if res.SessionID == "" {
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"warning: %s did not surface a %s; cannot drop into the interactive TUI. Run `revu open` to inspect the review instead.\n",
+			opts.Engine, sessionIDLabel(opts.Engine))
+		return nil
+	}
+	return deps.resume(ctx, cmd.OutOrStdout(), opts.Engine, res.SessionID)
+}
+
+// sessionIDLabel names the engine's session identifier the way that engine
+// does, so warnings match what the user would look for in review.yml.
+func sessionIDLabel(engine reviewEngine) string {
+	if engine == engineCodex {
+		return "thread_id"
+	}
+	return "session_id"
+}
+
+// reviewGenOptions is the input to one generation run. It carries its own
+// writers rather than a *cobra.Command so callers can redirect progress
+// without touching the command's stdout.
+type reviewGenOptions struct {
+	Engine   reviewEngine
+	Slug     string
+	PRNumber int
+	Focus    string
+
+	// Progress receives status lines and the agent's progress relay.
+	Progress io.Writer
+	// Warn receives non-fatal warnings and install hints.
+	Warn io.Writer
+}
+
+// reviewGenResult describes one generated review.
+type reviewGenResult struct {
+	Engine    string `json:"engine"`
+	Repo      string `json:"repo"`
+	PR        int    `json:"pr"`
+	OutDir    string `json:"out_dir"`
+	SessionID string `json:"session_id,omitempty"`
+}
+
+// generateReview runs the review-pr skill and writes the agent's identity
+// back into review.yml's generated_by. It never resumes: whether to drop
+// into the agent's TUI is the caller's decision.
+func (deps reviewDeps) generateReview(ctx context.Context, opts reviewGenOptions) (reviewGenResult, error) {
+	switch opts.Engine {
 	case engineCodex:
-		return runReviewCodex(ctx, cmd, slug, prNumber, focus)
+		return deps.generateReviewCodex(ctx, opts)
 	default:
-		return runReviewClaude(ctx, cmd, slug, prNumber, focus)
+		return deps.generateReviewClaude(ctx, opts)
 	}
 }
 
-func runReviewClaude(ctx context.Context, cmd *cobra.Command, slug string, prNumber int, focus string) error {
-	fmt.Fprintf(cmd.OutOrStdout(), "Generating review for %s#%d via claude --print /review-pr ...\n\n", slug, prNumber)
+func (deps reviewDeps) generateReviewClaude(ctx context.Context, opts reviewGenOptions) (reviewGenResult, error) {
+	fmt.Fprintf(opts.Progress, "Generating review for %s#%d via claude --print /review-pr ...\n\n", opts.Slug, opts.PRNumber)
 
-	result, err := claude.RunReviewPR(ctx, claude.ReviewArgs{
-		PRNumber:  prNumber,
-		Focus:     focus,
-		OwnerRepo: slug,
+	result, err := deps.runClaude(ctx, claude.ReviewArgs{
+		PRNumber:  opts.PRNumber,
+		Focus:     opts.Focus,
+		OwnerRepo: opts.Slug,
+		Progress:  opts.Progress,
 	})
 	if err != nil {
 		if errors.Is(err, claude.ErrCLINotFound) {
-			fmt.Fprintln(cmd.ErrOrStderr(), claude.InstallHint())
+			fmt.Fprintln(opts.Warn, claude.InstallHint())
 		}
-		return err
+		return reviewGenResult{}, err
 	}
 
 	if err := store.SaveSessionID(result.OutDir, result.SessionID); err != nil {
 		// Non-fatal: review files are already written; resume just
 		// won't be available for this PR until you re-review.
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not record session_id in review.yml: %v\n", err)
+		fmt.Fprintf(opts.Warn, "warning: could not record session_id in review.yml: %v\n", err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "\nReview generated at %s\n", result.OutDir)
-	if result.SessionID == "" {
-		fmt.Fprintln(cmd.ErrOrStderr(), "warning: claude did not surface a session_id; cannot drop into the interactive TUI. Run `revu open` to inspect the review instead.")
-		return nil
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Resuming claude session %s ...\n\n", result.SessionID)
-	return claude.RunResume(ctx, claude.ResumeArgs{SessionID: result.SessionID})
+	return reviewGenResult{
+		Engine:    string(engineClaude),
+		Repo:      opts.Slug,
+		PR:        opts.PRNumber,
+		OutDir:    result.OutDir,
+		SessionID: result.SessionID,
+	}, nil
 }
 
-func runReviewCodex(ctx context.Context, cmd *cobra.Command, slug string, prNumber int, focus string) error {
-	fmt.Fprintf(cmd.OutOrStdout(), "Generating review for %s#%d via codex exec $review-pr ...\n\n", slug, prNumber)
+func (deps reviewDeps) generateReviewCodex(ctx context.Context, opts reviewGenOptions) (reviewGenResult, error) {
+	fmt.Fprintf(opts.Progress, "Generating review for %s#%d via codex exec $review-pr ...\n\n", opts.Slug, opts.PRNumber)
 
-	result, err := codex.RunReviewPR(ctx, codex.ReviewArgs{
-		PRNumber:  prNumber,
-		Focus:     focus,
-		OwnerRepo: slug,
+	result, err := deps.runCodex(ctx, codex.ReviewArgs{
+		PRNumber:  opts.PRNumber,
+		Focus:     opts.Focus,
+		OwnerRepo: opts.Slug,
+		Progress:  opts.Progress,
 	})
 	if err != nil {
 		if errors.Is(err, codex.ErrCLINotFound) {
-			fmt.Fprintln(cmd.ErrOrStderr(), codex.InstallHint())
+			fmt.Fprintln(opts.Warn, codex.InstallHint())
 		}
-		return err
+		return reviewGenResult{}, err
 	}
 
 	// The skill always writes `tool: claude-code` (it was originally a
@@ -186,14 +283,24 @@ func runReviewCodex(ctx context.Context, cmd *cobra.Command, slug string, prNumb
 		SessionID: result.SessionID,
 	}
 	if err := store.SaveGeneratedBy(result.OutDir, patch); err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not record codex generated_by in review.yml: %v\n", err)
+		fmt.Fprintf(opts.Warn, "warning: could not record codex generated_by in review.yml: %v\n", err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "\nReview generated at %s\n", result.OutDir)
-	if result.SessionID == "" {
-		fmt.Fprintln(cmd.ErrOrStderr(), "warning: codex did not surface a thread_id; cannot drop into the interactive TUI. Run `revu open` to inspect the review instead.")
-		return nil
+	return reviewGenResult{
+		Engine:    string(engineCodex),
+		Repo:      opts.Slug,
+		PR:        opts.PRNumber,
+		OutDir:    result.OutDir,
+		SessionID: result.SessionID,
+	}, nil
+}
+
+// resumeReviewSession execs the engine's resume command, handing the
+// terminal to the agent's interactive TUI.
+func resumeReviewSession(ctx context.Context, out io.Writer, engine reviewEngine, sessionID string) error {
+	fmt.Fprintf(out, "Resuming %s session %s ...\n\n", engine, sessionID)
+	if engine == engineCodex {
+		return codex.RunResume(ctx, codex.ResumeArgs{SessionID: sessionID})
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Resuming codex session %s ...\n\n", result.SessionID)
-	return codex.RunResume(ctx, codex.ResumeArgs{SessionID: result.SessionID})
+	return claude.RunResume(ctx, claude.ResumeArgs{SessionID: sessionID})
 }
