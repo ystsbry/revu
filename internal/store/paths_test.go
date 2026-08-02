@@ -357,3 +357,86 @@ func TestResolveReviewDirWithoutAnyReviewYML(t *testing.T) {
 		t.Fatalf("got %q want %q", got, arg)
 	}
 }
+
+func TestLatestReviewDirForPRSince(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("REVU_HOME", root)
+	repoDir := filepath.Join(root, "owner", "repo")
+
+	now := time.Now()
+	old := now.Add(-24 * time.Hour)
+	staleDir := mkReviewed(t, repoDir, 7, "old1234", old)
+
+	// Zero `since` keeps the original behaviour: age is irrelevant.
+	got, err := LatestReviewDirForPRSince("owner/repo", 7, time.Time{})
+	if err != nil {
+		t.Fatalf("zero since should accept any review: %v", err)
+	}
+	if got != staleDir {
+		t.Fatalf("got %q want %q", got, staleDir)
+	}
+	if got, err = LatestReviewDirForPR("owner/repo", 7); err != nil || got != staleDir {
+		t.Fatalf("LatestReviewDirForPR = (%q, %v), want (%q, nil)", got, err, staleDir)
+	}
+
+	// A review older than the run means this run produced nothing.
+	_, err = LatestReviewDirForPRSince("owner/repo", 7, now)
+	if err == nil {
+		t.Fatal("expected a stale review to be rejected")
+	}
+	if !strings.Contains(err.Error(), "no review was generated for this run") {
+		t.Fatalf("error should explain the review is stale, got %q", err.Error())
+	}
+
+	// A review written during the run is accepted.
+	freshDir := mkReviewed(t, repoDir, 7, "new5678", now.Add(time.Second))
+	got, err = LatestReviewDirForPRSince("owner/repo", 7, now)
+	if err != nil {
+		t.Fatalf("fresh review should be accepted: %v", err)
+	}
+	if got != freshDir {
+		t.Fatalf("got %q want %q", got, freshDir)
+	}
+}
+
+func TestLatestReviewDirForPRSinceMissing(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("REVU_HOME", root)
+	if err := os.MkdirAll(filepath.Join(root, "owner", "repo", "pr-7"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// "nothing there at all" must stay distinguishable from "there but stale".
+	_, err := LatestReviewDirForPRSince("owner/repo", 7, time.Now())
+	if err == nil {
+		t.Fatal("expected an error when no review.yml exists")
+	}
+	if !strings.Contains(err.Error(), "no {sha}/review.yml under") {
+		t.Fatalf("error should say no review exists, got %q", err.Error())
+	}
+}
+
+// A review.yml written just after the run started can carry an mtime a few
+// milliseconds earlier, because the kernel stamps mtimes from a coarse
+// cached clock. That must not read as "stale".
+func TestLatestReviewDirForPRSinceToleratesClockSkew(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("REVU_HOME", root)
+	repoDir := filepath.Join(root, "owner", "repo")
+
+	since := time.Now()
+	dir := mkReviewed(t, repoDir, 7, "abc1234", since.Add(-50*time.Millisecond))
+
+	got, err := LatestReviewDirForPRSince("owner/repo", 7, since)
+	if err != nil {
+		t.Fatalf("a review stamped just before the run start should be accepted: %v", err)
+	}
+	if got != dir {
+		t.Fatalf("got %q want %q", got, dir)
+	}
+
+	// The tolerance must stay far below the age of a previous run's output.
+	mkReviewed(t, repoDir, 8, "abc1234", since.Add(-time.Hour))
+	if _, err := LatestReviewDirForPRSince("owner/repo", 8, since); err == nil {
+		t.Fatal("an hour-old review should still be rejected")
+	}
+}

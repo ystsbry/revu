@@ -12,10 +12,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/ystsbry/revu/internal/store"
 )
@@ -32,6 +34,22 @@ type ReviewArgs struct {
 
 	// Bin overrides the resolved codex binary. Empty falls back to "codex".
 	Bin string
+
+	// Progress receives the human-readable relay of codex's --json event
+	// stream. nil falls back to os.Stdout. Non-interactive callers point
+	// this at stderr so stdout stays clean for machine-readable output.
+	Progress io.Writer
+
+	// Stdin is handed to the codex process. nil falls back to os.Stdin so
+	// interactive runs keep terminal passthrough. Non-interactive callers
+	// pass an empty reader so codex can never block waiting for input.
+	Stdin io.Reader
+
+	// NotBefore rejects a review directory whose review.yml predates it,
+	// so a run that produced nothing fails instead of returning the
+	// previous run's output. Zero means "accept the newest review dir
+	// regardless of age" — see store.LatestReviewDirForPRSince.
+	NotBefore time.Time
 }
 
 // ReviewResult mirrors claude.ReviewResult.
@@ -89,7 +107,10 @@ func RunReviewPR(ctx context.Context, args ReviewArgs) (ReviewResult, error) {
 	}
 
 	cmd := exec.CommandContext(ctx, bin, buildExecArgs(prompt, cwd, revuRoot)...)
-	cmd.Stdin = os.Stdin
+	// The child's stderr and the relay's own diagnostics stay on
+	// os.Stderr on purpose: only stdout is a machine-readable channel for
+	// non-interactive callers, and they want codex's own errors visible.
+	cmd.Stdin = resolveStdin(args.Stdin)
 	cmd.Stderr = os.Stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -98,7 +119,7 @@ func RunReviewPR(ctx context.Context, args ReviewArgs) (ReviewResult, error) {
 	if err := cmd.Start(); err != nil {
 		return ReviewResult{}, fmt.Errorf("codex exec %q: start: %w", prompt, err)
 	}
-	sessionID, relayErr := relayProgress(stdout, os.Stdout)
+	sessionID, relayErr := relayProgress(stdout, resolveProgress(args.Progress))
 	if relayErr != nil {
 		fmt.Fprintf(os.Stderr, "codex stream relay: %v\n", relayErr)
 	}
@@ -106,11 +127,27 @@ func RunReviewPR(ctx context.Context, args ReviewArgs) (ReviewResult, error) {
 		return ReviewResult{}, fmt.Errorf("codex exec %q: %w", prompt, err)
 	}
 
-	out, err := store.LatestReviewDirForPR(args.OwnerRepo, args.PRNumber)
+	out, err := store.LatestReviewDirForPRSince(args.OwnerRepo, args.PRNumber, args.NotBefore)
 	if err != nil {
 		return ReviewResult{}, fmt.Errorf("locate review dir after codex run (codex may have failed silently): %w", err)
 	}
 	return ReviewResult{OutDir: out, SessionID: sessionID}, nil
+}
+
+// resolveProgress returns w, or os.Stdout when the caller left it unset.
+func resolveProgress(w io.Writer) io.Writer {
+	if w == nil {
+		return os.Stdout
+	}
+	return w
+}
+
+// resolveStdin returns r, or os.Stdin when the caller left it unset.
+func resolveStdin(r io.Reader) io.Reader {
+	if r == nil {
+		return os.Stdin
+	}
+	return r
 }
 
 // buildExecArgs constructs the argv (after the binary) for
