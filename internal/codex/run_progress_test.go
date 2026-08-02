@@ -76,6 +76,7 @@ func TestRunReviewPRRoutesProgressAndStdin(t *testing.T) {
 		t.Fatalf("pipe: %v", err)
 	}
 	os.Stdout = w
+	defer func() { os.Stdout = realStdout }()
 
 	var progress bytes.Buffer
 	res, err := RunReviewPR(context.Background(), ReviewArgs{

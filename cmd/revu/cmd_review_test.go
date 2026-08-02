@@ -422,6 +422,51 @@ func TestReviewDefaultStillResumes(t *testing.T) {
 	}
 }
 
+// Under --json an absent session id disappears from the object entirely
+// (omitempty), so the only place a consumer can learn about it is stderr.
+func TestReviewNonInteractiveWarnsWhenNoSessionID(t *testing.T) {
+	t.Parallel()
+	dir := reviewFixture(t)
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"json", []string{"--no-resume", "--json", "42"}},
+		{"human", []string{"--no-resume", "42"}},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rec := &resumeCall{}
+			deps := stubDeps(t, rec)
+			deps.runClaude = func(context.Context, claude.ReviewArgs) (claude.ReviewResult, error) {
+				return claude.ReviewResult{OutDir: dir}, nil
+			}
+
+			stdout, stderr, err := runReviewCmd(t, deps, tc.args...)
+			if err != nil {
+				t.Fatalf("a missing session id is not fatal: %v", err)
+			}
+			if !strings.Contains(stderr, "did not surface a session_id") {
+				t.Errorf("stderr should warn that resume is unavailable, got %q", stderr)
+			}
+			if tc.name != "json" {
+				return
+			}
+			// The key is dropped rather than emitted empty, which is
+			// exactly why the warning has to exist.
+			var raw map[string]any
+			if uerr := json.Unmarshal([]byte(stdout), &raw); uerr != nil {
+				t.Fatalf("stdout is not JSON (%v): %q", uerr, stdout)
+			}
+			if _, ok := raw["session_id"]; ok {
+				t.Errorf("session_id should be omitted when empty, got %v", raw)
+			}
+		})
+	}
+}
+
 func TestReviewWarnsWhenNoSessionID(t *testing.T) {
 	t.Parallel()
 	dir := reviewFixture(t)
@@ -441,5 +486,13 @@ func TestReviewWarnsWhenNoSessionID(t *testing.T) {
 	// codex calls it a thread_id; the warning should say so.
 	if !strings.Contains(stderr, "codex did not surface a thread_id") {
 		t.Errorf("warning should name the engine's own identifier, got %q", stderr)
+	}
+	// The interactive warning is the only one here: the non-interactive
+	// variant must not double up on it.
+	if n := strings.Count(stderr, "did not surface a thread_id"); n != 1 {
+		t.Errorf("warning emitted %d times, want exactly 1: %q", n, stderr)
+	}
+	if strings.Contains(stderr, "revu resume` is unavailable") {
+		t.Errorf("the non-interactive warning should not fire in interactive mode, got %q", stderr)
 	}
 }

@@ -180,6 +180,8 @@ revu review 42 --codex --no-resume --json
 
 このフィールド名は消費側との契約なので、互換性を保って変更します。`session_id` は `--codex` のとき codex の `thread_id` が入ります（`review.yml` の `generated_by` と同じ扱い）。
 
+**エージェントが session_id を返さなかった場合、`session_id` キー自体が出力から消えます**（レビューの生成自体は成功しているので終了コードは 0）。その実行は `revu resume` できないため、標準エラーに警告を出します。消費側は `session_id` の有無を確認してから resume 系の処理につないでください。
+
 | 挙動 | 内容 |
 |---|---|
 | `--json` は `--no-resume` が必須 | 結果 JSON を出した直後に端末をエージェントへ渡すと、呼び出し側が標準出力を追えなくなるため |

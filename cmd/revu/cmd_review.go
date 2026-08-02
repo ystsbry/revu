@@ -236,6 +236,15 @@ func (deps reviewDeps) runReview(ctx context.Context, cmd *cobra.Command, opts r
 		return err
 	}
 
+	// Non-interactive callers get no TUI to notice the absence in, and
+	// under --json the omitempty tag drops session_id from the object
+	// entirely — so say it on stderr, which is free for diagnostics here.
+	if opts.NoResume && res.SessionID == "" {
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"warning: %s did not surface a %s; the result carries no session_id, so `revu resume` is unavailable for this review.\n",
+			opts.Engine, sessionIDLabel(opts.Engine))
+	}
+
 	if opts.AsJSON {
 		return writeReviewResultJSON(cmd.OutOrStdout(), res)
 	}
