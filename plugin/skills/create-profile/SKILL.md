@@ -1,9 +1,9 @@
 ---
-name: profile
-description: revu のリポジトリプロファイルを対話で作成する。リポジトリ登録（default）を最新化し、プロファイル名と対象リポジトリをユーザーに確認して config に [[profile]] を書き込み、validation まで行う。「プロファイルを作って」「リポジトリをグループ分けしたい」「revu:profile」などと言われたら使う。
+name: create-profile
+description: revu のリポジトリプロファイルを対話で作成する。リポジトリ登録（default）を最新化し、プロファイル名と対象リポジトリをユーザーに確認して config に [[profile]] を書き込み、validation まで行う。「プロファイルを作って」「リポジトリをグループ分けしたい」「revu:create-profile」などと言われたら使う。
 ---
 
-# revu:profile
+# revu:create-profile
 
 登録リポジトリのプロファイル（名前付きサブセット）を、対話で安全に作成する。
 
@@ -12,8 +12,8 @@ description: revu のリポジトリプロファイルを対話で作成する�
 ## 入力
 
 ```
-/revu:profile
-/revu:profile <プロファイル名>
+/revu:create-profile
+/revu:create-profile <プロファイル名>
 ```
 
 - `<プロファイル名>` (任意): 先に名前が決まっているとき。省略時は Step 2 で確認する

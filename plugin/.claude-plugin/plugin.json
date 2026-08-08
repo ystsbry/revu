@@ -1,6 +1,6 @@
 {
   "name": "revu",
   "version": "0.1.0",
-  "description": "PR review pipeline backed by the revu CLI. Provides /revu:pr to generate reviews consumable by revu, /revu:edit to safely edit generated review data, and /revu:profile to interactively create repository profiles.",
+  "description": "PR review pipeline backed by the revu CLI. Provides /revu:pr to generate reviews consumable by revu, /revu:edit to safely edit generated review data, and /revu:create-profile to interactively create repository profiles.",
   "author": { "name": "ystsbry" }
 }

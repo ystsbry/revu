@@ -81,7 +81,7 @@ make uninstall PREFIX=$HOME/.local      # 別 PREFIX で入れた場合
 
 ## revu プラグイン（スキル）のインストール
 
-スキルはすべて `plugin/` 配下の revu プラグインとして配布します。レビュー生成の `revu:pr`・レビューデータ編集の `revu:edit`・プロファイル作成の `revu:profile` の 3 スキル構成で、同じプラグインを Claude Code と OpenAI Codex CLI の両方から呼べます。skill 本体は 1 つで、ランタイムだけ差し替わります。
+スキルはすべて `plugin/` 配下の revu プラグインとして配布します。レビュー生成の `revu:pr`・レビューデータ編集の `revu:edit`・プロファイル作成の `revu:create-profile` の 3 スキル構成で、同じプラグインを Claude Code と OpenAI Codex CLI の両方から呼べます。skill 本体は 1 つで、ランタイムだけ差し替わります。
 
 ### Claude Code
 
@@ -98,7 +98,7 @@ Claude Code に `/revu:pr <PR_NUMBER>` と入力すると skill が起動し、`
 /revu:pr 123
 /revu:pr 123 --focus security,perf
 /revu:edit c3 を reject して
-/revu:profile
+/revu:create-profile
 ```
 
 ### OpenAI Codex CLI
