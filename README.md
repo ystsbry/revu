@@ -263,6 +263,7 @@ $ revu guidelines list
 | `revu review PR_NUMBER --no-resume --json` | 同上で、結果を JSON で標準出力（進捗は標準エラーへ） |
 | `revu validate [dir]` | review.yml と Markdown の整合性チェック |
 | `revu status [dir]` | accept/reject の集計、submit 状況を表示 |
+| `revu tui` | 複数リポジトリのレビューダッシュボードを起動（登録リポジトリ（プロファイル適用）→ GitHub の PR 一覧 → PR アクション → レビュー TUI と辿れる。cwd 非依存） |
 | `revu open [dir]` | TUI を起動（clone は cwd 一致 → 登録リポジトリの順で解決） |
 | `revu open --repo-root <path> <dir>` | repo 検証をスキップして任意のローカル clone を指定 |
 | `revu export [dir] --format json` | 投稿ペイロードを JSON で標準出力（API は呼ばない） |

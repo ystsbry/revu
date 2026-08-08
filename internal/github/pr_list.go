@@ -9,7 +9,12 @@ import (
 	"strings"
 )
 
-// PRListItem is a single entry in the picker. Mirrors the JSON shape we
+// DefaultPRSearch is the search applied when a repository has no per-repo
+// override ([[repo]].search in config): the PRs waiting on the current gh
+// user's review.
+const DefaultPRSearch = "review-requested:@me"
+
+// PRListItem is a single entry in a PR list. Mirrors the JSON shape we
 // request from `gh pr list`.
 type PRListItem struct {
 	Number      int    `json:"number"`
@@ -23,17 +28,28 @@ type PRListItem struct {
 	UpdatedAt string `json:"updatedAt"`
 }
 
-// ListReviewRequestedPRs returns open PRs in the cwd's repo where the
-// current gh user is a requested reviewer. Empty result and no error when
-// there are no such PRs.
-func (c *GhClient) ListReviewRequestedPRs(ctx context.Context) ([]PRListItem, error) {
-	cmd := exec.CommandContext(ctx, c.bin(),
-		"pr", "list",
-		"--state", "open",
-		"--search", "review-requested:@me",
+// prListArgs builds the argv (after the binary) for one `gh pr list`
+// invocation. Extracted for tests: the --repo/--search wiring is the whole
+// point of ListPRs and must not silently drop out.
+func prListArgs(slug, search string) []string {
+	args := []string{"pr", "list", "--state", "open"}
+	if slug != "" {
+		args = append(args, "--repo", slug)
+	}
+	if search != "" {
+		args = append(args, "--search", search)
+	}
+	return append(args,
 		"--json", "number,title,url,baseRefName,headRefName,author,updatedAt",
 		"--limit", "50",
 	)
+}
+
+// ListPRs returns open PRs of slug matching search. An empty slug targets
+// the cwd's repo (gh's default); an empty search lists every open PR.
+// Empty result and no error when nothing matches.
+func (c *GhClient) ListPRs(ctx context.Context, slug, search string) ([]PRListItem, error) {
+	cmd := exec.CommandContext(ctx, c.bin(), prListArgs(slug, search)...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -45,4 +61,11 @@ func (c *GhClient) ListReviewRequestedPRs(ctx context.Context) ([]PRListItem, er
 		return nil, fmt.Errorf("parse gh pr list output: %w", err)
 	}
 	return items, nil
+}
+
+// ListReviewRequestedPRs returns open PRs in the cwd's repo where the
+// current gh user is a requested reviewer. Kept as a thin alias so existing
+// callers (revu pr list-mine, the review picker) read as before.
+func (c *GhClient) ListReviewRequestedPRs(ctx context.Context) ([]PRListItem, error) {
+	return c.ListPRs(ctx, "", DefaultPRSearch)
 }

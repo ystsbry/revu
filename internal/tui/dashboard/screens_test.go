@@ -49,21 +49,21 @@ func testReview(pr int) *model.Review {
 // newTestShell wires L0→L1→L2→L3 with fake loaders so the whole stack can
 // be driven without touching ~/.revu. The L3 is quitOnQ via Embed.
 func newTestShell() (*Root, *RepoList, *PRList, *PRActions) {
-	l2 := NewPRActions("o/r", PRItem{Number: 5, ShortSHA: "abc1234", Path: "/dev/null/pr-5/abc1234"})
+	l2 := NewPRActions("o/r", PRItem{Number: 5, ReviewedPath: "/dev/null/pr-5/abc1234"})
 	l2.load = func() (*model.Review, error) { return testReview(5), nil }
 	l2.openReview = func(r *model.Review) (Screen, error) {
 		return Embed("Review #5", quitOnQ{}), nil
 	}
 
-	l1 := NewPRList("o/r")
-	l1.load = func() ([]PRItem, error) {
-		return []PRItem{{Number: 5, ShortSHA: "abc1234", Submitted: true}}, nil
+	l1 := NewPRList("o/r", "")
+	l1.load = func(search string) ([]PRItem, error) {
+		return []PRItem{{Number: 5, ReviewedPath: "/dev/null/pr-5/abc1234", Submitted: true}}, nil
 	}
 	l1.openPR = func(PRItem) Screen { return l2 }
 
 	l0 := NewRepoList()
-	l0.load = func() ([]RepoItem, error) {
-		return []RepoItem{{Slug: "o/r", PRCount: 1}}, nil
+	l0.load = func() (repoListData, error) {
+		return repoListData{Items: []RepoItem{{Slug: "o/r", Registered: true, ReviewedCount: 1}}}, nil
 	}
 	l0.openRepo = func(RepoItem) Screen { return l1 }
 
@@ -78,14 +78,14 @@ func TestFullNavigationFlow(t *testing.T) {
 	drive(r, tea.WindowSizeMsg{Width: 100, Height: 30})
 
 	// L0: load rows, select the repo.
-	drive(r, repoListLoadedMsg{items: []RepoItem{{Slug: "o/r", PRCount: 1}}})
+	drive(r, repoListLoadedMsg{data: repoListData{Items: []RepoItem{{Slug: "o/r", Registered: true, ReviewedCount: 1}}}})
 	drive(r, keyMsg("enter"))
 	if got := r.ActiveTitle(); got != "o/r" {
 		t.Fatalf("after L0 enter, active = %q, want o/r (L1)", got)
 	}
 
 	// L1: load rows, select the PR.
-	drive(r, prListLoadedMsg{items: []PRItem{{Number: 5, ShortSHA: "abc1234"}}})
+	drive(r, prListLoadedMsg{items: []PRItem{{Number: 5, ReviewedPath: "/dev/null/pr-5/abc1234"}}})
 	drive(r, keyMsg("enter"))
 	if got := r.ActiveTitle(); got != "PR #5" {
 		t.Fatalf("after L1 enter, active = %q, want PR #5 (L2)", got)
@@ -126,7 +126,7 @@ func TestFullNavigationFlow(t *testing.T) {
 func TestRepoListQuitsAtRoot(t *testing.T) {
 	t.Parallel()
 	r, _, _, _ := newTestShell()
-	drive(r, repoListLoadedMsg{items: nil})
+	drive(r, repoListLoadedMsg{})
 
 	_, cmd := r.Update(keyMsg("q"))
 	if !isQuit(cmd) {
@@ -147,22 +147,24 @@ func TestRepoListStates(t *testing.T) {
 		t.Errorf("error view should surface the loader error:\n%s", m.View())
 	}
 
-	m.Update(repoListLoadedMsg{items: nil})
-	if !strings.Contains(m.View(), "No reviewed repositories") {
+	m.Update(repoListLoadedMsg{})
+	if !strings.Contains(m.View(), "No repositories to show") {
 		t.Errorf("empty view should explain how to get started:\n%s", m.View())
 	}
 
-	m.Update(repoListLoadedMsg{items: []RepoItem{{Slug: "o/r", PRCount: 3}}})
+	m.Update(repoListLoadedMsg{data: repoListData{Items: []RepoItem{
+		{Slug: "o/r", Registered: true, ReviewedCount: 3},
+	}}})
 	out := m.View()
-	if !strings.Contains(out, "o/r") || !strings.Contains(out, "(3 PR)") {
-		t.Errorf("loaded view should list the repo with its PR count:\n%s", out)
+	if !strings.Contains(out, "o/r") || !strings.Contains(out, "(3 reviewed)") {
+		t.Errorf("loaded view should list the repo with its review count:\n%s", out)
 	}
 }
 
 func TestRepoListCursorMoves(t *testing.T) {
 	t.Parallel()
 	m := NewRepoList()
-	m.Update(repoListLoadedMsg{items: []RepoItem{{Slug: "a/a"}, {Slug: "b/b"}}})
+	m.Update(repoListLoadedMsg{data: repoListData{Items: []RepoItem{{Slug: "a/a"}, {Slug: "b/b"}}}})
 
 	var pushed Screen
 	m.openRepo = func(it RepoItem) Screen {
@@ -197,20 +199,23 @@ func TestRepoListCursorMoves(t *testing.T) {
 	}
 }
 
-func TestPRListShowsSubmittedBadge(t *testing.T) {
+func TestPRListShowsBadges(t *testing.T) {
 	t.Parallel()
-	m := NewPRList("o/r")
+	m := NewPRList("o/r", "")
 	m.Update(prListLoadedMsg{items: []PRItem{
-		{Number: 5, ShortSHA: "abc1234", Submitted: true},
-		{Number: 3, ShortSHA: "def5678"},
+		{Number: 5, Title: "add feature", ReviewedPath: "/p", Submitted: true},
+		{Number: 3, Title: "fix bug", JobState: "running"},
 	}})
 
 	out := m.View()
-	if !strings.Contains(out, "[submitted]") {
-		t.Errorf("submitted PR should carry a badge:\n%s", out)
+	if got := strings.Count(out, "[reviewed]"); got != 1 {
+		t.Errorf("[reviewed] count = %d, want 1:\n%s", got, out)
 	}
 	if got := strings.Count(out, "[submitted]"); got != 1 {
-		t.Errorf("badge count = %d, want 1", got)
+		t.Errorf("[submitted] count = %d, want 1:\n%s", got, out)
+	}
+	if !strings.Contains(out, "[running]") {
+		t.Errorf("job state badge missing:\n%s", out)
 	}
 }
 
@@ -257,5 +262,136 @@ func TestQuitToPopUnwrapsBatches(t *testing.T) {
 	}
 	if !sawPop {
 		t.Errorf("quit inside a batch should map to PopMsg")
+	}
+}
+
+// The acceptance criterion "per-repo 検索条件が反映され、画面内で切替できる":
+// "/" opens the search input seeded with the current condition; enter
+// applies it and reloads with the new value; esc cancels.
+func TestPRListSearchSwitch(t *testing.T) {
+	t.Parallel()
+	var got []string
+	m := NewPRList("o/r", "label:x")
+	m.load = func(search string) ([]PRItem, error) {
+		got = append(got, search)
+		return nil, nil
+	}
+
+	// Initial load uses the per-repo condition.
+	if cmd := m.Init(); cmd != nil {
+		m.Update(cmd())
+	}
+	if len(got) != 1 || got[0] != "label:x" {
+		t.Fatalf("initial searches = %v, want [label:x]", got)
+	}
+
+	// "/" → replace the query → enter reloads with it.
+	m.Update(keyMsg("/"))
+	if !m.searching {
+		t.Fatal("/ should enter search mode")
+	}
+	m.searchInput.SetValue("author:alice")
+	_, cmd := m.Update(keyMsg("enter"))
+	if cmd == nil {
+		t.Fatal("applying a search should reload")
+	}
+	m.Update(cmd())
+	if len(got) != 2 || got[1] != "author:alice" {
+		t.Fatalf("searches = %v, want author:alice applied", got)
+	}
+	if m.search != "author:alice" {
+		t.Errorf("search = %q, want author:alice", m.search)
+	}
+
+	// esc cancels without touching the applied condition.
+	m.Update(keyMsg("/"))
+	m.searchInput.SetValue("junk")
+	m.Update(keyMsg("esc"))
+	if m.searching || m.search != "author:alice" {
+		t.Errorf("esc should cancel edit; searching=%v search=%q", m.searching, m.search)
+	}
+}
+
+// While the search input is focused, list keys (q, j, ...) must go to the
+// input instead of popping the screen or moving the cursor.
+func TestPRListSearchModeCapturesKeys(t *testing.T) {
+	t.Parallel()
+	m := NewPRList("o/r", "")
+	m.Update(prListLoadedMsg{items: []PRItem{{Number: 1}, {Number: 2}}})
+
+	m.Update(keyMsg("/"))
+	m.searchInput.SetValue("")
+	_, cmd := m.Update(keyMsg("q"))
+	if cmd != nil {
+		if _, popped := cmd().(PopMsg); popped {
+			t.Fatal("q while searching must not pop the screen")
+		}
+	}
+	if m.cursor != 0 {
+		t.Errorf("cursor moved while typing: %d", m.cursor)
+	}
+}
+
+// The default search comes from github.DefaultPRSearch when the repo has
+// no per-repo override.
+func TestPRListDefaultSearch(t *testing.T) {
+	t.Parallel()
+	m := NewPRList("o/r", "")
+	if m.search != "review-requested:@me" {
+		t.Errorf("default search = %q", m.search)
+	}
+	m = NewPRList("o/r", "label:y")
+	if m.search != "label:y" {
+		t.Errorf("per-repo search = %q, want label:y", m.search)
+	}
+}
+
+// A PR without a local review shows GitHub metadata plus a hint, and has
+// no runnable actions.
+func TestPRActionsWithoutLocalReview(t *testing.T) {
+	t.Parallel()
+	l2 := NewPRActions("o/r", PRItem{Number: 9, Title: "new feature", Author: "alice"})
+
+	if cmd := l2.Init(); cmd != nil {
+		t.Fatal("no local review: Init should not load anything")
+	}
+	out := l2.View()
+	for _, want := range []string{"local review: (none yet)", "@alice", "PR #9"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("view missing %q:\n%s", want, out)
+		}
+	}
+
+	_, cmd := l2.Update(keyMsg("enter"))
+	if cmd != nil {
+		t.Error("enter must be a no-op without a local review")
+	}
+}
+
+// L0 shows the active profile in the header and surfaces registry/profile
+// inconsistencies as warnings instead of dropping them silently.
+func TestRepoListShowsProfileAndWarnings(t *testing.T) {
+	t.Parallel()
+	m := NewRepoList()
+	m.Update(repoListLoadedMsg{data: repoListData{
+		Profile:  "work",
+		Warnings: []string{"profile references unregistered repo x/y"},
+		Items: []RepoItem{
+			{Slug: "a/a", Registered: true},
+			{Slug: "b/b", Registered: true, PathMissing: true},
+			{Slug: "c/c"},
+		},
+	}})
+
+	out := m.View()
+	for _, want := range []string{
+		"[profile: work]",
+		"warning: profile references unregistered repo x/y",
+		"[clone missing]",
+		"[unregistered]",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("view missing %q:\n%s", want, out)
+		}
 	}
 }
