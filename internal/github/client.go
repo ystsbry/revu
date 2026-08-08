@@ -22,6 +22,7 @@ type Client interface {
 	PRHead(ctx context.Context, slug string, number int) (string, error)
 	PRState(ctx context.Context, slug string, number int) (string, error)
 	PostReview(ctx context.Context, slug string, number int, p Payload) (int64, error)
+	ListPRs(ctx context.Context, slug, search string) ([]PRListItem, error)
 	ListReviewRequestedPRs(ctx context.Context) ([]PRListItem, error)
 	PRMeta(ctx context.Context, number int) (PRMeta, error)
 	PRDiff(ctx context.Context, number int) (string, error)

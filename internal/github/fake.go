@@ -9,6 +9,7 @@ type FakeClient struct {
 	PRHeadFunc                 func(ctx context.Context, slug string, number int) (string, error)
 	PRStateFunc                func(ctx context.Context, slug string, number int) (string, error)
 	PostReviewFunc             func(ctx context.Context, slug string, number int, p Payload) (int64, error)
+	ListPRsFunc                func(ctx context.Context, slug, search string) ([]PRListItem, error)
 	ListReviewRequestedPRsFunc func(ctx context.Context) ([]PRListItem, error)
 	PRMetaFunc                 func(ctx context.Context, number int) (PRMeta, error)
 	PRDiffFunc                 func(ctx context.Context, number int) (string, error)
@@ -40,6 +41,13 @@ func (f *FakeClient) PostReview(ctx context.Context, slug string, number int, p 
 		return f.PostReviewFunc(ctx, slug, number, p)
 	}
 	return 0, nil
+}
+
+func (f *FakeClient) ListPRs(ctx context.Context, slug, search string) ([]PRListItem, error) {
+	if f.ListPRsFunc != nil {
+		return f.ListPRsFunc(ctx, slug, search)
+	}
+	return nil, nil
 }
 
 func (f *FakeClient) ListReviewRequestedPRs(ctx context.Context) ([]PRListItem, error) {
