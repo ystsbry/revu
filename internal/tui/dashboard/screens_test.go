@@ -348,25 +348,25 @@ func TestPRListDefaultSearch(t *testing.T) {
 	}
 }
 
-// A PR without a local review shows GitHub metadata plus a hint, and has
-// no runnable actions.
+// A PR without a local review shows GitHub metadata plus the run actions,
+// but neither [open] nor [resume] (there is nothing to open or resume).
 func TestPRActionsWithoutLocalReview(t *testing.T) {
 	t.Parallel()
 	l2 := NewPRActions("o/r", PRItem{Number: 9, Title: "new feature", Author: "alice"})
 	l2.loadJob = func() (*jobs.Job, []string) { return nil, nil }
 
-	// Init loads only the job info now; with no job it changes nothing.
 	l2.Update(l2.reloadJob()())
 	out := l2.View()
-	for _, want := range []string{"local review: (none yet)", "@alice", "PR #9"} {
+	for _, want := range []string{"local review: (none yet", "@alice", "PR #9",
+		"Run review (background job)", "Run review (foreground"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("view missing %q:\n%s", want, out)
 		}
 	}
-
-	_, cmd := l2.Update(keyMsg("enter"))
-	if cmd != nil {
-		t.Error("enter must be a no-op without a local review")
+	for _, absent := range []string{"Open review (TUI)", "Resume"} {
+		if strings.Contains(out, absent) {
+			t.Errorf("view should not offer %q without a review:\n%s", absent, out)
+		}
 	}
 }
 

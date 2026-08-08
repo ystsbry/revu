@@ -20,39 +20,26 @@ func (deps reviewDeps) startBackgroundReview(cmd *cobra.Command, opts reviewOpti
 		return err
 	}
 
-	now := deps.now()
-	if running, ok := jobs.RunningFor(opts.Slug, opts.PRNumber, now); ok {
-		return fmt.Errorf("a review for %s#%d is already running (job %s) — wait for it or check `revu jobs log %s`",
-			opts.Slug, opts.PRNumber, running.ID, running.ID)
-	}
-
-	job, err := jobs.New(opts.Slug, opts.PRNumber, string(opts.Engine), "bg", opts.Focus, now)
-	if err != nil {
-		return err
-	}
-	job.WorkDir = workDir
-	if err := jobs.Save(job); err != nil {
-		return err
-	}
-
 	bin, err := deps.executable()
 	if err != nil {
 		return fmt.Errorf("locate revu binary for the worker: %w", err)
 	}
-	pid, err := deps.spawnWorker(bin, job)
+	job, err := jobs.StartReview(jobs.StartReviewOptions{
+		Slug:    opts.Slug,
+		PR:      opts.PRNumber,
+		Engine:  string(opts.Engine),
+		Focus:   opts.Focus,
+		WorkDir: workDir,
+		RevuBin: bin,
+		Now:     deps.now,
+		Spawn:   deps.spawnWorker,
+	})
 	if err != nil {
-		// The record must not sit as running forever when the worker
-		// never existed; write the failure down where the TUI will see it.
-		job.State = jobs.StateFailed
-		job.Err = fmt.Sprintf("spawn worker: %v", err)
-		finished := deps.now()
-		job.FinishedAt = &finished
-		_ = jobs.Save(job)
-		return fmt.Errorf("spawn worker: %w", err)
+		return err
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Started background review job %s (pid %d)\n", job.ID, pid)
+	fmt.Fprintf(out, "Started background review job %s (pid %d)\n", job.ID, job.PID)
 	fmt.Fprintf(out, "  repo:  %s#%d (%s)\n", opts.Slug, opts.PRNumber, opts.Engine)
 	fmt.Fprintf(out, "  log:   revu jobs log %s\n", job.ID)
 	fmt.Fprintf(out, "  state: revu jobs list\n")
