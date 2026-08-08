@@ -440,3 +440,50 @@ func TestLatestReviewDirForPRSinceToleratesClockSkew(t *testing.T) {
 		t.Fatal("an hour-old review should still be rejected")
 	}
 }
+
+func TestListReviewedRepos(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("REVU_HOME", root)
+
+	// Two reviewed repos with different PR counts.
+	mkReviewed(t, filepath.Join(root, "alice", "app"), 1, "aaaaaaa", time.Time{})
+	mkReviewed(t, filepath.Join(root, "alice", "app"), 2, "bbbbbbb", time.Time{})
+	mkReviewed(t, filepath.Join(root, "bob", "lib"), 7, "ccccccc", time.Time{})
+
+	// A repo dir without any reviewed PR must be skipped.
+	if err := os.MkdirAll(filepath.Join(root, "carol", "empty", "pr-3"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Stray files at owner level must be ignored.
+	if err := os.WriteFile(filepath.Join(root, "stray.txt"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ListReviewedRepos()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ReviewedRepo{
+		{Slug: "alice/app", PRCount: 2},
+		{Slug: "bob/lib", PRCount: 1},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ListReviewedRepos = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("repo[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestListReviewedReposMissingHome(t *testing.T) {
+	t.Setenv("REVU_HOME", filepath.Join(t.TempDir(), "does-not-exist"))
+	got, err := ListReviewedRepos()
+	if err != nil {
+		t.Fatalf("missing home should not error, got %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected empty list, got %+v", got)
+	}
+}
