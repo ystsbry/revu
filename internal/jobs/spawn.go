@@ -20,7 +20,9 @@ func Spawn(bin string, args []string, logPath string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("open job log: %w", err)
 	}
-	defer logf.Close()
+	// The parent's copy of the fd can close as soon as Start has handed
+	// the child its own; a close error here has nothing to report.
+	defer func() { _ = logf.Close() }()
 
 	cmd := exec.Command(bin, args...)
 	cmd.Stdout = logf
