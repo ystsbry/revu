@@ -18,7 +18,7 @@ may set a list of guideline file paths under [review] guidelines = [...].
 Paths are resolved relative to the layer's config.toml and concatenated
 in layer order (user → .revu → .revu-local).
 
-Use 'revu guidelines paths' from the review-pr skill (or any script) to
+Use 'revu guidelines paths' from the revu:pr skill (or any script) to
 get one absolute path per line, filtered to files that currently exist.
 Use 'revu guidelines list' for a human-readable status table that
 includes missing entries.`,

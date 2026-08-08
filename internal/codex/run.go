@@ -1,11 +1,11 @@
 // Package codex wraps the `codex` CLI (OpenAI Codex CLI) so revu can invoke
-// the review-pr skill from its own commands, as an alternative to the
+// the revu:pr skill from its own commands, as an alternative to the
 // `claude` runtime.
 //
 // Like internal/claude, we shell out rather than re-implementing the skill:
-// skills/review-pr/SKILL.md is the same source of truth, but loaded by
-// Codex's skill loader (~/.agents/skills/review-pr — see scripts/install-codex.sh)
-// at the user scope.
+// plugin/skills/pr/SKILL.md is the same source of truth, but loaded by
+// Codex's plugin loader (installed via scripts/install-codex.sh, which
+// registers this repo as a plugin marketplace).
 package codex
 
 import (
@@ -58,13 +58,13 @@ type ReviewResult struct {
 	SessionID string
 }
 
-// RunReviewPR invokes `codex exec --json "$review-pr <PR>"` in the
+// RunReviewPR invokes `codex exec --json "$revu:pr <PR>"` in the
 // foreground, relaying progress to stdout and capturing the thread_id so
 // the caller can later `codex resume <id>`.
 //
-// The `$review-pr` prefix is Codex's skill-invocation syntax (see
-// scripts/install-codex.sh) — it resolves to skills/review-pr/SKILL.md
-// installed under ~/.agents/skills/review-pr.
+// The `$revu:pr` prefix is Codex's plugin-skill invocation syntax (see
+// scripts/install-codex.sh) — it resolves to plugin/skills/pr/SKILL.md
+// installed via the revu plugin marketplace.
 func RunReviewPR(ctx context.Context, args ReviewArgs) (ReviewResult, error) {
 	if args.PRNumber <= 0 {
 		return ReviewResult{}, fmt.Errorf("PRNumber must be positive, got %d", args.PRNumber)
@@ -81,7 +81,7 @@ func RunReviewPR(ctx context.Context, args ReviewArgs) (ReviewResult, error) {
 		return ReviewResult{}, ErrCLINotFound
 	}
 
-	prompt := "$review-pr " + strconv.Itoa(args.PRNumber)
+	prompt := "$revu:pr " + strconv.Itoa(args.PRNumber)
 	if args.Focus != "" {
 		prompt += " --focus " + args.Focus
 	}
@@ -247,7 +247,7 @@ Install OpenAI Codex CLI, then ensure ` + "`codex`" + ` is on PATH:
   https://developers.openai.com/codex/cli
 
 After install, run ` + "`codex --version`" + ` to verify. To make the
-review-pr skill available to codex, run:
+revu:pr skill available to codex, run:
 
   scripts/install-codex.sh
 

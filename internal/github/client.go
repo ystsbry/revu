@@ -37,7 +37,7 @@ const (
 	PRStateMerged = "MERGED"
 )
 
-// PRMeta is the subset of gh pr view JSON the review-pr skill consumes.
+// PRMeta is the subset of gh pr view JSON the revu:pr skill consumes.
 // BaseRepo is the "owner/repo" slug of the PR's base repository, derived from
 // the PR url because gh pr view does not expose a baseRepository field.
 type PRMeta struct {
@@ -132,7 +132,7 @@ func (c *GhClient) PRState(ctx context.Context, slug string, number int) (string
 	return resp.State, nil
 }
 
-// PRMeta returns the metadata fields the review-pr skill needs (head_sha,
+// PRMeta returns the metadata fields the revu:pr skill needs (head_sha,
 // base_branch, title, body, base repo slug) in one gh call. Defaults to
 // cwd's repo, same as `gh pr view <N>`.
 func (c *GhClient) PRMeta(ctx context.Context, number int) (PRMeta, error) {

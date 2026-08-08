@@ -9,7 +9,7 @@
 //  4. ~/.config/revu/templates/{name}              (when env not set)
 //
 // Skill-bundled templates are intentionally NOT resolved here — the
-// review-pr skill owns its install path and falls back to its own bundled
+// revu:pr skill owns its install path and falls back to its own bundled
 // copy when revu reports "not found", so revu stays agnostic of skill
 // internals.
 package template

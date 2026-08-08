@@ -1,40 +1,31 @@
 #!/usr/bin/env bash
 #
-# Install the review-pr skill for the OpenAI Codex CLI.
+# Install the revu plugin for the OpenAI Codex CLI.
 #
-# Codex CLI loads Agent Skills from $HOME/.agents/skills (user-scope).
-# See: https://developers.openai.com/codex/skills
+# Registers this repository as a local plugin marketplace
+# (.agents/plugins/marketplace.json -> ./plugin) and installs the `revu`
+# plugin from it. Codex copies the plugin into ~/.codex/plugins/cache/,
+# so re-run this script after updating the repo to pick up changes.
 #
-# The skill is installed by symlinking the whole skill DIRECTORY, not the
-# SKILL.md file inside it. Codex's skill loader follows directory symlinks but
-# silently drops symlinked SKILL.md files (see openai/codex#17344 / #15756),
-# so a file-level symlink would never be discovered.
+# Restart Codex after install. Skills are invoked as:
 #
-# Restart Codex after install to pick up the new skill.
+#   $revu:pr <PR_NUMBER>
+#   $revu:edit <dir or instructions>
 #
 # Usage:
-#   scripts/install-codex.sh            # install (creates directory symlink)
-#   scripts/install-codex.sh --copy     # install by copy (no symlink)
-#   scripts/install-codex.sh --uninstall
-#
-# Env:
-#   AGENTS_HOME  override the agents config dir (default: ~/.agents)
+#   scripts/install-codex.sh              # marketplace add + plugin add
+#   scripts/install-codex.sh --uninstall  # plugin remove + marketplace remove
 
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SRC_DIR="$REPO_DIR/skills/review-pr"
-AGENTS_HOME="${AGENTS_HOME:-$HOME/.agents}"
-DEST_PARENT="$AGENTS_HOME/skills"
-DEST="$DEST_PARENT/review-pr"
 
-mode="symlink"
+mode="install"
 case "${1:-}" in
-  --copy)      mode="copy" ;;
   --uninstall) mode="uninstall" ;;
   "")          ;;
   -h|--help)
-    sed -n '2,21p' "$0"
+    sed -n '2,17p' "$0"
     exit 0
     ;;
   *)
@@ -43,47 +34,36 @@ case "${1:-}" in
     ;;
 esac
 
-if [ "$mode" = "uninstall" ]; then
-  if [ -e "$DEST" ] || [ -L "$DEST" ]; then
-    rm -rf "$DEST"
-    echo "removed: $DEST"
-  else
-    echo "not installed: $DEST"
-  fi
-  exit 0
-fi
-
-if [ ! -f "$SRC_DIR/SKILL.md" ]; then
-  echo "source SKILL.md not found: $SRC_DIR/SKILL.md" >&2
+if ! command -v codex >/dev/null 2>&1; then
+  echo "codex CLI not found on PATH: https://developers.openai.com/codex/cli" >&2
   exit 1
 fi
 
-mkdir -p "$DEST_PARENT"
-
-if [ -e "$DEST" ] || [ -L "$DEST" ]; then
-  rm -rf "$DEST"
+if [ "$mode" = "uninstall" ]; then
+  codex plugin remove revu || true
+  codex plugin marketplace remove revu || true
+  echo "Removed the revu plugin and marketplace. Restart codex."
+  exit 0
 fi
 
-case "$mode" in
-  symlink)
-    ln -s "$SRC_DIR" "$DEST"
-    echo "linked: $DEST -> $SRC_DIR"
-    ;;
-  copy)
-    cp -r "$SRC_DIR" "$DEST"
-    echo "copied: $SRC_DIR -> $DEST"
-    ;;
-esac
+if [ ! -f "$REPO_DIR/.agents/plugins/marketplace.json" ]; then
+  echo "marketplace definition not found: $REPO_DIR/.agents/plugins/marketplace.json" >&2
+  exit 1
+fi
+
+codex plugin marketplace add "$REPO_DIR"
+codex plugin add revu@revu
 
 cat <<EOF
 
-Installed review-pr as a Codex CLI skill.
-Restart Codex to pick up the new skill.
+Installed the revu plugin for Codex CLI.
+Restart Codex to pick it up.
 
 Use it in codex:
 
-  \$review-pr <PR_NUMBER>
-  \$review-pr <PR_NUMBER> --focus security,perf
+  \$revu:pr <PR_NUMBER>
+  \$revu:pr <PR_NUMBER> --focus security,perf
+  \$revu:edit <dir or instructions>
 
 Prerequisites:
   - gh CLI authenticated (gh auth status)

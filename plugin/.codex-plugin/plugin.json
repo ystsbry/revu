@@ -1,0 +1,7 @@
+{
+  "name": "revu",
+  "version": "0.1.0",
+  "description": "PR review pipeline backed by the revu CLI. Provides revu:pr to generate reviews consumable by revu, and revu:edit to safely edit generated review data.",
+  "author": { "name": "ystsbry" },
+  "skills": "./skills/"
+}

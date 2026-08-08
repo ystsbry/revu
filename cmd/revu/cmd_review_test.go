@@ -66,7 +66,7 @@ func TestReviewCmdFlagsRegistered(t *testing.T) {
 	if codexFlag.Annotations["cobra_annotation_mutually_exclusive"] == nil {
 		t.Errorf("--codex not marked mutually exclusive")
 	}
-	// revu review takes no --repo: the review-pr skill runs in cwd, so a
+	// revu review takes no --repo: the revu:pr skill runs in cwd, so a
 	// slug flag could only mislead about what gets reviewed.
 	if cmd.Flags().Lookup("repo") != nil {
 		t.Error("review cmd should not expose --repo while generation is cwd-bound")

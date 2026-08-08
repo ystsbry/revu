@@ -1,6 +1,6 @@
 # revu コーディングガイドライン（レビュー観点）
 
-revu の review-pr skill が一般観点に追加で適用する、revu 固有のレビュー指針。
+revu の revu:pr skill が一般観点に追加で適用する、revu 固有のレビュー指針。
 
 ## Go コード
 

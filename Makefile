@@ -14,8 +14,11 @@ PREFIX ?= /usr/local
 INSTALL_DIR := $(DESTDIR)$(PREFIX)/bin
 
 # Override with `make install-skills CLAUDE_SKILLS_DIR=/path/to/skills`.
+# Installs the plugin as a Claude Code skills-dir plugin: a single symlink
+# $(CLAUDE_SKILLS_DIR)/revu -> plugin/, which exposes /revu:pr and /revu:edit.
 CLAUDE_SKILLS_DIR ?= $(HOME)/.claude/skills
-SKILLS_SRC := $(CURDIR)/skills
+PLUGIN_SRC := $(CURDIR)/plugin
+PLUGIN_LINK := $(CLAUDE_SKILLS_DIR)/revu
 
 build:
 	@mkdir -p bin
@@ -50,25 +53,17 @@ uninstall:
 
 install-skills:
 	@mkdir -p $(CLAUDE_SKILLS_DIR)
-	@for src in $(SKILLS_SRC)/*/; do \
-		name=$$(basename $$src); \
-		target=$(CLAUDE_SKILLS_DIR)/$$name; \
-		if [ -L $$target ]; then \
-			rm -f $$target; \
-		elif [ -e $$target ]; then \
-			echo "skip: $$target already exists (not a symlink)"; \
-			continue; \
-		fi; \
-		ln -s $$src $$target; \
-		echo "Linked $$target -> $$src"; \
-	done
+	@if [ -L $(PLUGIN_LINK) ]; then \
+		rm -f $(PLUGIN_LINK); \
+	elif [ -e $(PLUGIN_LINK) ]; then \
+		echo "skip: $(PLUGIN_LINK) already exists (not a symlink)"; \
+		exit 0; \
+	fi; \
+	ln -s $(PLUGIN_SRC) $(PLUGIN_LINK); \
+	echo "Linked $(PLUGIN_LINK) -> $(PLUGIN_SRC)"
 
 uninstall-skills:
-	@for src in $(SKILLS_SRC)/*/; do \
-		name=$$(basename $$src); \
-		target=$(CLAUDE_SKILLS_DIR)/$$name; \
-		if [ -L $$target ]; then \
-			rm -f $$target; \
-			echo "Removed $$target"; \
-		fi; \
-	done
+	@if [ -L $(PLUGIN_LINK) ]; then \
+		rm -f $(PLUGIN_LINK); \
+		echo "Removed $(PLUGIN_LINK)"; \
+	fi

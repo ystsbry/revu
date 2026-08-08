@@ -112,7 +112,7 @@ func TestSaveSessionIDAddsField(t *testing.T) {
 		t.Fatalf("session_id = %q want %q", got, "sess-abc-123")
 	}
 	// Other generated_by fields must survive the patch.
-	if r.GeneratedBy.Tool != "claude-code" || r.GeneratedBy.Skill != "review-pr" {
+	if r.GeneratedBy.Tool != "claude-code" || r.GeneratedBy.Skill != "revu:pr" {
 		t.Fatalf("generated_by clobbered: %+v", r.GeneratedBy)
 	}
 	// Comments must remain loadable and unchanged.
@@ -165,7 +165,7 @@ func TestSaveGeneratedByOverwritesTool(t *testing.T) {
 		t.Errorf("session_id = %q, want %q", r.GeneratedBy.SessionID, "thread-019e9ff6")
 	}
 	// Fields we did not patch must survive.
-	if r.GeneratedBy.Skill != "review-pr" || r.GeneratedBy.Model != "claude-opus-4-7" {
+	if r.GeneratedBy.Skill != "revu:pr" || r.GeneratedBy.Model != "claude-opus-4-7" {
 		t.Errorf("untouched fields clobbered: %+v", r.GeneratedBy)
 	}
 	// Comments must remain loadable and unchanged.
