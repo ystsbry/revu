@@ -335,3 +335,55 @@ func ResolveReviewDir(arg string) (string, error) {
 	}
 	return LatestPRDir(repoDir)
 }
+
+// ReviewedRepo is one entry returned by ListReviewedRepos.
+type ReviewedRepo struct {
+	Slug    string // "owner/repo"
+	PRCount int    // number of reviewed pr-N dirs under it
+}
+
+// ListReviewedRepos walks ~/.revu/{owner}/{repo} and returns every repo
+// that has at least one reviewed PR directory beneath it, sorted by slug.
+// Non-directories and repos without any reviewed pr-N are skipped. A
+// missing revu home yields an empty list, not an error: the dashboard
+// treats "never reviewed anything" as a normal state.
+func ListReviewedRepos() ([]ReviewedRepo, error) {
+	home, err := Home()
+	if err != nil {
+		return nil, err
+	}
+	owners, err := os.ReadDir(home)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read revu home: %w", err)
+	}
+
+	var out []ReviewedRepo
+	for _, o := range owners {
+		if !o.IsDir() {
+			continue
+		}
+		ownerDir := filepath.Join(home, o.Name())
+		repos, err := os.ReadDir(ownerDir)
+		if err != nil {
+			continue
+		}
+		for _, r := range repos {
+			if !r.IsDir() {
+				continue
+			}
+			dirs, err := ListReviewedPRDirs(filepath.Join(ownerDir, r.Name()))
+			if err != nil || len(dirs) == 0 {
+				continue
+			}
+			out = append(out, ReviewedRepo{
+				Slug:    o.Name() + "/" + r.Name(),
+				PRCount: len(dirs),
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Slug < out[j].Slug })
+	return out, nil
+}

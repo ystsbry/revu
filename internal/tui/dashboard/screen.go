@@ -30,6 +30,11 @@ type Screen interface {
 //
 // so a model written as a standalone bubbletea program can be hosted
 // without being aware of the dashboard.
+//
+// A hosted model's tea.Quit is translated into a Pop: standalone, "quit"
+// means "exit the program", but inside the dashboard it means "close this
+// screen and go back". Without the translation the review TUI's "q" would
+// tear down the whole dashboard.
 func Embed(title string, m tea.Model) Screen {
 	return embedded{title: title, model: m}
 }
@@ -40,7 +45,7 @@ type embedded struct {
 }
 
 func (e embedded) Title() string { return e.title }
-func (e embedded) Init() tea.Cmd { return e.model.Init() }
+func (e embedded) Init() tea.Cmd { return quitToPop(e.model.Init()) }
 func (e embedded) View() string  { return e.model.View() }
 
 // Update forwards to the wrapped model and re-wraps whatever it returns,
@@ -51,5 +56,30 @@ func (e embedded) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if next != nil {
 		e.model = next
 	}
-	return e, cmd
+	return e, quitToPop(cmd)
+}
+
+// quitToPop wraps cmd so a tea.QuitMsg it produces becomes a PopMsg,
+// including inside a tea.Batch. Sequenced commands (tea.Sequence) cannot
+// be unwrapped — their message type is unexported — but the review TUI
+// only ever quits via a bare tea.Quit, so batches are the deepest nesting
+// this has to see through.
+func quitToPop(cmd tea.Cmd) tea.Cmd {
+	if cmd == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		msg := cmd()
+		switch m := msg.(type) {
+		case tea.QuitMsg:
+			return PopMsg{}
+		case tea.BatchMsg:
+			wrapped := make([]tea.Cmd, len(m))
+			for i, c := range m {
+				wrapped[i] = quitToPop(c)
+			}
+			return tea.BatchMsg(wrapped)
+		}
+		return msg
+	}
 }
