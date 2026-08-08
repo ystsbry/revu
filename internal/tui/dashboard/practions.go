@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +38,22 @@ type prActionsJobMsg struct {
 // worker live.
 type jobTickMsg struct{}
 
+// jobStartedMsg reports a background-review start attempted from L2.
+type jobStartedMsg struct {
+	job jobs.Job
+	err error
+}
+
+// execDoneMsg arrives when a terminal-handover action (foreground review,
+// session resume) returns control to the dashboard.
+type execDoneMsg struct{ err error }
+
+// prAction is one selectable row of the L2 action panel.
+type prAction struct {
+	id    string
+	label string
+}
+
 // jobLogTailLines is how many log lines the L2 screen shows.
 const jobLogTailLines = 8
 
@@ -58,25 +76,76 @@ type PRActions struct {
 
 	job     *jobs.Job
 	logTail []string
+	notice  string
 
 	load       func() (*model.Review, error)
 	loadJob    func() (*jobs.Job, []string)
 	openReview func(*model.Review) (Screen, error)
+	// startJob launches a background review in workDir; runExec hands the
+	// terminal to an external command and returns on its exit. Both are
+	// swapped out in tests.
+	startJob func(workDir string) (jobs.Job, error)
+	runExec  func(argv []string, dir string) tea.Cmd
 }
 
 func NewPRActions(slug string, item PRItem) *PRActions {
 	m := &PRActions{slug: slug, item: item}
 	m.openReview = func(r *model.Review) (Screen, error) { return embedReviewTUI(r) }
 	m.loadJob = func() (*jobs.Job, []string) { return loadJobInfo(slug, item.Number) }
+	m.startJob = func(workDir string) (jobs.Job, error) {
+		return jobs.StartReview(jobs.StartReviewOptions{
+			Slug: slug, PR: item.Number, Engine: "claude", WorkDir: workDir,
+		})
+	}
+	m.runExec = runExternal
 	if item.ReviewedPath == "" {
-		// Nothing local to load; the screen renders GitHub metadata and
-		// the job state only.
-		m.load = func() (*model.Review, error) { return nil, nil }
+		// No review was known when the row was built, but one may appear
+		// while this screen is up (a foreground run, a finishing job) —
+		// so discovery goes through the store instead of returning nil.
+		m.load = func() (*model.Review, error) {
+			dir, err := store.LatestReviewDirForPR(slug, item.Number)
+			if err != nil {
+				return nil, nil // no review yet: a state, not an error
+			}
+			return store.Load(dir)
+		}
 		return m
 	}
 	m.loading = true
 	m.load = func() (*model.Review, error) { return store.Load(item.ReviewedPath) }
 	return m
+}
+
+// runExternal hands the terminal to argv running in dir and reports back
+// when it exits. This is how foreground reviews and session resumes leave
+// the dashboard: bubbletea releases the tty, the agent owns it until it
+// returns, and the dashboard resumes where it was.
+func runExternal(argv []string, dir string) tea.Cmd {
+	c := exec.Command(argv[0], argv[1:]...)
+	c.Dir = dir
+	return tea.ExecProcess(c, func(err error) tea.Msg { return execDoneMsg{err} })
+}
+
+// cloneDirFor resolves the local clone actions run in: cwd when it is the
+// repo, else the registered [[repo]] path. Unlike the L3 embed (which
+// tolerates a missing clone by dropping the code pane), run actions need a
+// real tree, so absence is an error with the fix spelled out.
+func cloneDirFor(slug string) (string, error) {
+	if root, err := store.VerifyRepoMatches(slug); err == nil {
+		return root, nil
+	}
+	cfg, _, err := config.Load()
+	if err != nil {
+		return "", fmt.Errorf("load config: %w", err)
+	}
+	def, ok := cfg.FindRepo(slug)
+	if !ok {
+		return "", fmt.Errorf("%s is not registered — run `revu repo add <path>` (or `revu repo scan`) first", slug)
+	}
+	if st, err := os.Stat(def.Path); err != nil || !st.IsDir() {
+		return "", fmt.Errorf("registered clone for %s not found at %s", slug, def.Path)
+	}
+	return def.Path, nil
 }
 
 // loadJobInfo fetches the newest background job for slug#pr along with the
@@ -167,13 +236,38 @@ func reloadSubmissionMeta(r *model.Review) error {
 	return nil
 }
 
-// actions returns the selectable rows. Empty when there is no local
-// review to act on; WS-E appends review generation here.
-func (m *PRActions) actions() []string {
-	if m.review == nil {
-		return nil
+// actions returns the selectable rows for the current state. Labels for
+// foreground/session actions spell out that they hand the terminal to the
+// agent — the dashboard is gone until that process exits.
+func (m *PRActions) actions() []prAction {
+	var out []prAction
+	if m.review != nil {
+		out = append(out, prAction{id: "open", label: "Open review (TUI)"})
 	}
-	return []string{"Open review (TUI)"}
+	if !m.jobRunning() {
+		out = append(out,
+			prAction{id: "bg", label: "Run review (background job)"},
+			prAction{id: "fg", label: "Run review (foreground — hands the terminal to claude until it exits)"},
+		)
+	}
+	if m.review != nil && m.review.GeneratedBy.SessionID != "" {
+		tool := "claude"
+		if m.review.GeneratedBy.Tool == "codex" {
+			tool = "codex"
+		}
+		out = append(out, prAction{
+			id:    "resume",
+			label: fmt.Sprintf("Resume %s session — hands the terminal to %s until it exits", tool, tool),
+		})
+	}
+	return out
+}
+
+// clampCursor keeps the cursor inside the (state-dependent) action list.
+func (m *PRActions) clampCursor() {
+	if n := len(m.actions()); m.cursor >= n {
+		m.cursor = max(0, n-1)
+	}
 }
 
 func (m *PRActions) Title() string { return fmt.Sprintf("PR #%d", m.item.Number) }
@@ -181,16 +275,14 @@ func (m *PRActions) Title() string { return fmt.Sprintf("PR #%d", m.item.Number)
 func (m *PRActions) Init() tea.Cmd { return m.reload() }
 
 func (m *PRActions) reload() tea.Cmd {
-	cmds := []tea.Cmd{m.reloadJob()}
+	load := m.load
 	if m.item.ReviewedPath != "" {
 		m.loading = true
-		load := m.load
-		cmds = append(cmds, func() tea.Msg {
-			r, err := load()
-			return prActionsLoadedMsg{review: r, err: err}
-		})
 	}
-	return tea.Batch(cmds...)
+	return tea.Batch(m.reloadJob(), func() tea.Msg {
+		r, err := load()
+		return prActionsLoadedMsg{review: r, err: err}
+	})
 }
 
 func (m *PRActions) reloadJob() tea.Cmd {
@@ -215,12 +307,31 @@ func (m *PRActions) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.err = msg.err
 		m.review = msg.review
+		m.clampCursor()
 
 	case prActionsErrMsg:
 		m.actionErr = msg.err
 
+	case jobStartedMsg:
+		if msg.err != nil {
+			m.actionErr = msg.err
+			break
+		}
+		m.actionErr = nil
+		m.notice = fmt.Sprintf("Started background job %s", msg.job.ID)
+		m.clampCursor()
+		return m, m.reloadJob()
+
+	case execDoneMsg:
+		// The terminal is ours again; whatever the agent did (a fresh
+		// review, an edited one) is on disk, so re-read everything.
+		m.actionErr = msg.err
+		m.notice = ""
+		return m, m.reload()
+
 	case prActionsJobMsg:
 		m.job, m.logTail = msg.job, msg.tail
+		m.clampCursor()
 		if m.job == nil {
 			break
 		}
@@ -263,20 +374,61 @@ func (m *PRActions) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// runAction executes the selected action. Only "open review" exists today.
+// runAction executes the selected action.
 func (m *PRActions) runAction() tea.Cmd {
-	if m.review == nil {
+	acts := m.actions()
+	if m.cursor >= len(acts) {
 		return nil
 	}
-	review := m.review
-	open := m.openReview
-	return func() tea.Msg {
-		screen, err := open(review)
-		if err != nil {
-			return prActionsErrMsg{err: err}
+	switch acts[m.cursor].id {
+	case "open":
+		review := m.review
+		open := m.openReview
+		return func() tea.Msg {
+			screen, err := open(review)
+			if err != nil {
+				return prActionsErrMsg{err: err}
+			}
+			return PushMsg{Screen: screen}
 		}
-		return PushMsg{Screen: screen}
+
+	case "bg":
+		slug := m.slug
+		start := m.startJob
+		return func() tea.Msg {
+			dir, err := cloneDirFor(slug)
+			if err != nil {
+				return jobStartedMsg{err: err}
+			}
+			j, err := start(dir)
+			return jobStartedMsg{job: j, err: err}
+		}
+
+	case "fg":
+		return m.execRevu("review", strconv.Itoa(m.item.Number))
+
+	case "resume":
+		if m.review == nil {
+			return nil
+		}
+		return m.execRevu("resume", m.review.BaseDir)
 	}
+	return nil
+}
+
+// execRevu hands the terminal to `revu <args...>` running inside the PR's
+// clone. Errors resolving the binary or the clone surface in the action
+// panel instead of tearing the screen down.
+func (m *PRActions) execRevu(args ...string) tea.Cmd {
+	bin, err := os.Executable()
+	if err != nil {
+		return func() tea.Msg { return prActionsErrMsg{err: fmt.Errorf("locate revu binary: %w", err)} }
+	}
+	dir, err := cloneDirFor(m.slug)
+	if err != nil {
+		return func() tea.Msg { return prActionsErrMsg{err: err} }
+	}
+	return m.runExec(append([]string{bin}, args...), dir)
 }
 
 func (m *PRActions) View() string {
@@ -321,15 +473,15 @@ func (m *PRActions) metaView() string {
 		} else {
 			lines = append(lines, "submitted:    (not yet)")
 		}
-		lines = append(lines, fmt.Sprintf("dir:          %s", m.item.ReviewedPath))
+		dir := m.item.ReviewedPath
+		if dir == "" {
+			dir = r.BaseDir // review discovered after the row was built
+		}
+		lines = append(lines, fmt.Sprintf("dir:          %s", dir))
 	} else if m.jobRunning() {
 		lines = append(lines, "local review: (generating — background job running)")
 	} else {
-		lines = append(lines,
-			"local review: (none yet)",
-			"",
-			"Generate one with `revu review "+fmt.Sprint(m.item.Number)+" --bg` inside",
-			"the clone (in-dashboard generation arrives with WS-E), then press [r].")
+		lines = append(lines, "local review: (none yet — run a review below)")
 	}
 	return lipgloss.NewStyle().Faint(true).Padding(1, 1).
 		Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
@@ -381,9 +533,12 @@ func firstLineOf(s string) string {
 
 func (m *PRActions) actionView() string {
 	acts := m.actions()
-	rows := make([]string, 0, len(acts)+1)
+	rows := make([]string, 0, len(acts)+2)
 	for i, a := range acts {
-		rows = append(rows, cursorRow(a, i == m.cursor))
+		rows = append(rows, cursorRow(a.label, i == m.cursor))
+	}
+	if m.notice != "" {
+		rows = append(rows, "", lipgloss.NewStyle().Faint(true).Render(m.notice))
 	}
 	if m.actionErr != nil {
 		rows = append(rows, "", lipgloss.NewStyle().Faint(true).
