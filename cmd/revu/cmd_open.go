@@ -25,41 +25,49 @@ func newOpenCmd() *cobra.Command {
 If [dir] is omitted, the reviewed pr-N directories under
 ~/.revu/{owner}/{repo}/ (those that contain a review.yml) are listed in a
 picker so you can choose which one to open. The repo is derived from the
-current git remote.
+current git remote, or from --repo when given.
 
-By default, cwd's git remote must match the review's repo. Pass --repo-root
-to point at a clone elsewhere (or to bypass verification, e.g. for opening
-fixture review dirs that have no matching local clone).`,
+By default, cwd's git remote must match the review's repo; when it does
+not, a clone registered via 'revu repo add/scan' is used instead. Pass
+--repo-root to point at a clone explicitly (or to bypass verification,
+e.g. for opening fixture review dirs that have no matching local clone).`,
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 1 {
-				dir, err := store.ResolveReviewDir(args[0])
-				if err != nil {
-					return err
-				}
-				return openReviewDir(dir, repoRootFlag)
+	}
+	repoSlug := addRepoFlag(cmd)
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) == 1 {
+			if *repoSlug != "" {
+				return fmt.Errorf("[dir] and --repo are mutually exclusive")
 			}
-			dir, err := pickReviewedPRDir(cmd)
+			dir, err := store.ResolveReviewDir(args[0])
 			if err != nil {
 				return err
 			}
-			if dir == "" {
-				return nil // user cancelled
-			}
 			return openReviewDir(dir, repoRootFlag)
-		},
+		}
+		dir, err := pickReviewedPRDir(cmd, *repoSlug)
+		if err != nil {
+			return err
+		}
+		if dir == "" {
+			return nil // user cancelled
+		}
+		return openReviewDir(dir, repoRootFlag)
 	}
 	cmd.Flags().StringVar(&repoRootFlag, "repo-root", "",
 		"path to the local clone (skips cwd verification when set)")
 	return cmd
 }
 
-// pickReviewedPRDir lists reviewed pr-* dirs for the cwd's repo and runs the
-// picker. Returns "" when the user cancels.
-func pickReviewedPRDir(cmd *cobra.Command) (string, error) {
-	slug, err := store.CurrentRepoSlug()
-	if err != nil {
-		return "", fmt.Errorf("auto-resolve review dir: %w", err)
+// pickReviewedPRDir lists reviewed pr-* dirs for slug (cwd's repo when
+// empty) and runs the picker. Returns "" when the user cancels.
+func pickReviewedPRDir(cmd *cobra.Command, slug string) (string, error) {
+	if slug == "" {
+		var err error
+		slug, err = store.CurrentRepoSlug()
+		if err != nil {
+			return "", fmt.Errorf("auto-resolve review dir (run inside a clone or pass --repo): %w", err)
+		}
 	}
 	repoDir, err := store.RepoDir(slug)
 	if err != nil {
@@ -157,9 +165,18 @@ func resolveRepoRoot(override, expectedSlug string) (string, error) {
 		}
 		return abs, nil
 	}
-	root, err := store.VerifyRepoMatches(expectedSlug)
-	if err != nil {
-		return "", fmt.Errorf("revu open must run inside the matching repo (%s), or pass --repo-root: %w", expectedSlug, err)
+	if root, err := store.VerifyRepoMatches(expectedSlug); err == nil {
+		return root, nil
 	}
-	return root, nil
+	// cwd is not the review's repo: fall back to the registered clone, so
+	// `revu open` works from anywhere once the repo is `revu repo add`ed.
+	if cfg, _, err := config.Load(); err == nil {
+		if def, ok := cfg.FindRepo(expectedSlug); ok {
+			if st, statErr := os.Stat(def.Path); statErr == nil && st.IsDir() {
+				return def.Path, nil
+			}
+			return "", fmt.Errorf("registered clone for %s not found at %s (fix with `revu repo add <path>` or pass --repo-root)", expectedSlug, def.Path)
+		}
+	}
+	return "", fmt.Errorf("revu open must run inside the matching repo (%s), have it registered (`revu repo add <path>`), or be given --repo-root", expectedSlug)
 }

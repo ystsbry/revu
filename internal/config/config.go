@@ -35,6 +35,134 @@ type Config struct {
 	Editor EditorConfig `toml:"editor"`
 	UI     UIConfig     `toml:"ui"`
 	Review ReviewConfig `toml:"review"`
+	Repos  []RepoDef    `toml:"repo"`
+
+	// Profiles are named subsets of the registered repositories; the one
+	// named by ActiveProfile decides what repo-selection surfaces (repo
+	// list, dashboard) show. No profiles / no active profile = everything.
+	Profiles []ProfileDef `toml:"profile"`
+
+	// ActiveProfile selects the profile in effect. Empty or "default"
+	// means the full registry. Persisted by `revu profile use`.
+	ActiveProfile string `toml:"active_profile"`
+}
+
+// ProfileDef is one entry in the [[profile]] TOML array.
+//
+// Example:
+//
+//	[[profile]]
+//	name = "work"
+//	repos = ["acme/api", "acme/web"]
+//
+// The name "default" is reserved: it always means "every registered repo"
+// and cannot be declared explicitly.
+type ProfileDef struct {
+	// Name identifies the profile (used by `revu profile use <name>`).
+	Name string `toml:"name"`
+
+	// Repos lists the registered slugs this profile shows, in display
+	// order. Slugs that are not (or no longer) registered are reported by
+	// `revu repo list` / `revu profile list` rather than silently dropped.
+	Repos []string `toml:"repos"`
+}
+
+// DefaultProfileName is the reserved profile meaning "all registered
+// repos" — the state with no profile selected.
+const DefaultProfileName = "default"
+
+func validateProfileDef(p ProfileDef) error {
+	if p.Name == "" {
+		return errors.New("profile name is required")
+	}
+	if p.Name == DefaultProfileName {
+		return fmt.Errorf("profile name %q is reserved (it means all registered repos)", DefaultProfileName)
+	}
+	for _, s := range p.Repos {
+		parts := strings.Split(s, "/")
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return fmt.Errorf("profile %q: invalid repo slug %q (want \"owner/repo\")", p.Name, s)
+		}
+	}
+	return nil
+}
+
+// FindProfile returns the profile named name, if declared.
+func (c Config) FindProfile(name string) (ProfileDef, bool) {
+	for _, p := range c.Profiles {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return ProfileDef{}, false
+}
+
+// ActiveRepos returns the registered repos the active profile selects, in
+// the profile's order, plus any slugs the profile references that are not
+// registered. With no active profile (or "default") every registered repo
+// is returned in registry order. An active profile that does not exist
+// resolves like default but is reported via unknownProfile, so callers can
+// warn instead of silently showing everything.
+func (c Config) ActiveRepos() (repos []RepoDef, missing []string, unknownProfile string) {
+	name := c.ActiveProfile
+	if name == "" || name == DefaultProfileName {
+		return c.Repos, nil, ""
+	}
+	p, ok := c.FindProfile(name)
+	if !ok {
+		return c.Repos, nil, name
+	}
+	for _, slug := range p.Repos {
+		if def, ok := c.FindRepo(slug); ok {
+			repos = append(repos, def)
+		} else {
+			missing = append(missing, slug)
+		}
+	}
+	return repos, missing, ""
+}
+
+// RepoDef is one entry in the [[repo]] TOML array: a registered repository
+// the dashboard and cwd-independent commands can resolve without being run
+// inside the clone.
+//
+// Example:
+//
+//	[[repo]]
+//	slug = "ystsbry/revu"
+//	path = "/home/me/ghq/github.com/ystsbry/revu"
+//
+// Registration normally lives in the global user layer
+// (os.UserConfigDir()/revu/config.toml), written by `revu repo scan/add`;
+// project layers may still add entries, which override the user layer per
+// slug.
+type RepoDef struct {
+	// Slug is the GitHub "owner/repo" identifier. Required, unique.
+	Slug string `toml:"slug"`
+
+	// Path is the local clone location. Relative paths are resolved
+	// against the config.toml that declared them; after Load() they are
+	// absolute. Required.
+	Path string `toml:"path"`
+
+	// Search optionally narrows the PR list for this repository (consumed
+	// by the dashboard's PR screens; free-form GitHub search terms).
+	Search string `toml:"search,omitempty"`
+}
+
+// validateRepoDef rejects entries that cannot be resolved later. Path
+// existence is deliberately not checked here: a registered clone may be
+// temporarily absent (different machine, not yet cloned) and `revu repo
+// list` surfaces that instead.
+func validateRepoDef(d RepoDef) error {
+	parts := strings.Split(d.Slug, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return fmt.Errorf("invalid repo slug %q (want \"owner/repo\")", d.Slug)
+	}
+	if d.Path == "" {
+		return fmt.Errorf("repo %q: path is required", d.Slug)
+	}
+	return nil
 }
 
 // EditorConfig overrides the $EDITOR environment variable when non-empty.
@@ -321,7 +449,74 @@ func merge(base, over Config, baseDir string) (Config, error) {
 			out.Review.Guidelines = append(out.Review.Guidelines, abs)
 		}
 	}
+	if len(over.Repos) > 0 {
+		// Clone before the upsert below: base and out share the slice's
+		// backing array, and merge must not mutate its input.
+		out.Repos = append([]RepoDef(nil), out.Repos...)
+	}
+	for _, r := range over.Repos {
+		if err := validateRepoDef(r); err != nil {
+			return Config{}, err
+		}
+		if !filepath.IsAbs(r.Path) {
+			r.Path = filepath.Join(baseDir, r.Path)
+		}
+		r.Path = filepath.Clean(r.Path)
+		// Slug-keyed upsert: a later layer (or a later duplicate in the
+		// same layer) overrides the earlier entry in place, so ordering
+		// stays stable and there is never more than one entry per slug.
+		if i := repoIndex(out.Repos, r.Slug); i >= 0 {
+			out.Repos[i] = r
+		} else {
+			out.Repos = append(out.Repos, r)
+		}
+	}
+	if len(over.Profiles) > 0 {
+		// Same aliasing rule as Repos: clone before upserting.
+		out.Profiles = append([]ProfileDef(nil), out.Profiles...)
+	}
+	for _, p := range over.Profiles {
+		if err := validateProfileDef(p); err != nil {
+			return Config{}, err
+		}
+		if i := profileIndex(out.Profiles, p.Name); i >= 0 {
+			out.Profiles[i] = p
+		} else {
+			out.Profiles = append(out.Profiles, p)
+		}
+	}
+	if over.ActiveProfile != "" {
+		out.ActiveProfile = over.ActiveProfile
+	}
 	return out, nil
+}
+
+// profileIndex returns the index of name in defs, or -1.
+func profileIndex(defs []ProfileDef, name string) int {
+	for i, d := range defs {
+		if d.Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// repoIndex returns the index of slug in defs, or -1.
+func repoIndex(defs []RepoDef, slug string) int {
+	for i, d := range defs {
+		if d.Slug == slug {
+			return i
+		}
+	}
+	return -1
+}
+
+// FindRepo returns the registered entry for slug, if any.
+func (c Config) FindRepo(slug string) (RepoDef, bool) {
+	if i := repoIndex(c.Repos, slug); i >= 0 {
+		return c.Repos[i], true
+	}
+	return RepoDef{}, false
 }
 
 func containsString(s []string, v string) bool {
@@ -356,6 +551,28 @@ func BuildSeverityRegistry(defs []SeverityDef) (*model.SeverityRegistry, error) 
 
 // SampleTOML returns a starter config the user can drop at Path().
 const SampleTOML = `# revu configuration. All keys are optional; remove what you don't need.
+
+# Registered repositories: the dashboard and cwd-independent commands
+# resolve "owner/repo" slugs to local clones through these entries.
+# Normally maintained by 'revu repo scan <root>' / 'revu repo add <path>'
+# rather than by hand; [[repo]] blocks are machine-managed (revu rewrites
+# the matching block on update/remove, keeping everything else intact).
+#
+# [[repo]]
+# slug = "ystsbry/revu"
+# path = "/home/me/ghq/github.com/ystsbry/revu"
+# # search = "label:needs-review"   # optional PR-list filter (dashboard)
+
+# Profiles: named subsets of the registered repositories. The active one
+# (set with 'revu profile use <name>', stored as active_profile) decides
+# what 'revu repo list' and the dashboard show. "default" is reserved and
+# means every registered repo.
+#
+# active_profile = "work"
+#
+# [[profile]]
+# name = "work"
+# repos = ["acme/api", "acme/web"]
 
 [editor]
 # Editor command used by the 'e' key in the TUI. Whitespace separates
