@@ -64,6 +64,16 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return r, tea.Quit
 		}
 
+	case tea.MouseMsg:
+		// Screens render below the breadcrumb row and hit-test in their
+		// own coordinates (the embedded review TUI scans its own view),
+		// so shift the pointer up by the rows the shell owns.
+		m.Y -= breadcrumbHeight
+		if m.Y < 0 {
+			return r, nil // breadcrumb row itself: nothing to click yet
+		}
+		return r, r.updateActive(m)
+
 	case PushMsg:
 		return r, r.push(m.Screen)
 

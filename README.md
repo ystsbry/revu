@@ -342,6 +342,22 @@ revu repo list --profile oss  # 一時的に別プロファイルで表示
 - 選択は user config の `active_profile` キーとして永続化される（`[[repo]]` と同じく、このキーの行だけを機械編集する）
 - プロファイルが参照する slug が未登録の場合は黙って落とさず、`repo list` / `profile list` が明示する
 
+## TUI のマウス操作
+
+TUI（`revu open` / `revu tui` の L3、および PR picker）はマウスだけでも操作できます。キーバインドは従来どおりすべて動作します（マウスは追加の操作手段です）。
+
+| 操作 | 効果 |
+|---|---|
+| 行をクリック | コメント / PR を選択 |
+| 選択済み行を再クリック | 詳細を開く（picker では決定） |
+| 上部タブ（List / Summary / Detail）をクリック | ビュー切替 |
+| 詳細ビューのアクションバー（✓ accept / ✗ reject / ↺ undo / ◀ prev / next ▶ / ✎ edit / ≡ list） | クリックで実行 |
+| サマリの Event ラジオをクリック | review_event を直接設定 |
+| ホイール | リストのカーソル移動、詳細 Markdown ペイン / サマリ本文のスクロール |
+| ヘルプ表示中にクリック | ヘルプを閉じる |
+
+Windows Terminal / iTerm2 / tmux（`set -g mouse on`）などマウスレポーティング対応ターミナルで動作します。非対応ターミナルではキーボード操作のみになります。
+
 ## TUI のキーバインド
 
 ### グローバル
