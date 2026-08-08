@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"io"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -67,7 +68,14 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return r, r.push(m.Screen)
 
 	case PopMsg:
-		r.stack.pop()
+		// A popped screen is gone for good (a fresh one is built on the
+		// next descent), so screens holding OS resources — the PR list's
+		// job-book watcher — get to release them here.
+		if popped, ok := r.stack.pop(); ok {
+			if closer, isCloser := popped.(io.Closer); isCloser {
+				_ = closer.Close()
+			}
+		}
 		return r, nil
 	}
 
