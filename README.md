@@ -48,6 +48,9 @@ make build
 
 ## インストール
 
+> [!TIP]
+> このリポジトリ内で Claude Code を開いているなら、`/install` と入力するとプロジェクトスキル（`.claude/skills/install/`）が起動し、以降のバイナリ + Claude Code / Codex プラグインのセットアップを一括で行えます。
+
 ソースから build したバイナリを `/usr/local/bin` に置く場合:
 
 ```bash
