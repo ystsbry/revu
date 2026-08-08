@@ -93,10 +93,10 @@ revu templates path summary.md.tmpl
 revu templates path inline-comment.md.tmpl
 ```
 
-終了コード 0 なら標準出力に返った絶対パスがユーザー上書き。終了コード 1 なら上書きは無いので、plugin 同梱の以下をそのまま使う:
+終了コード 0 なら標準出力に返った絶対パスがユーザー上書き。終了コード 1 なら上書きは無いので、skill 同梱（この SKILL.md と同じディレクトリの `templates/`）をそのまま使う:
 
-- `~/.claude/plugins/revu/skills/pr/templates/summary.md.tmpl`
-- `~/.claude/plugins/revu/skills/pr/templates/inline-comment.md.tmpl`
+- `templates/summary.md.tmpl`
+- `templates/inline-comment.md.tmpl`
 
 `revu templates path` の探索順は（高優先 → 低優先）:
 
@@ -105,7 +105,7 @@ revu templates path inline-comment.md.tmpl
 3. `$REVU_TEMPLATES/<NAME>` — env が立っているとき
 4. `~/.config/revu/templates/<NAME>` — グローバル
 
-`revu` が `$PATH` に無い環境では plugin 同梱（`~/.claude/plugins/revu/skills/pr/templates/`）を直接使う。
+`revu` が `$PATH` に無い環境では skill 同梱（この SKILL.md と同じディレクトリの `templates/`）を直接使う。
 
 こうして決めた 2 つのパスを `Read` ツールで読み込み、内容を構造ガイドとして以降の生成に使う。テンプレートはあくまで「お手本」。固定文字列の置換ではない。
 

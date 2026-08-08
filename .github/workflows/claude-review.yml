@@ -1,10 +1,10 @@
 name: claude-review
 
-# PR コメントに `/claude review` と書かれたら、revu の review-pr スキルで
+# PR コメントに `/claude review` と書かれたら、revu の revu:pr スキルで
 # レビュー下書きを生成し、`revu submit --yes` で GitHub に投稿する。
 #
 # 役割分担:
-#   - Claude (claude-code-action): review-pr スキルを実行し、
+#   - Claude (claude-code-action): revu:pr スキルを実行し、
 #     ~/.revu/{owner}/{repo}/pr-{N}/ に review.yml + summary.md +
 #     comments/*.md を生成するだけ。GitHub への直接投稿はしない。
 #   - revu submit: 上で生成された下書きを GitHub PR レビューとして投稿。
@@ -53,7 +53,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh auth status
 
-      - name: generate review draft with claude (review-pr skill)
+      - name: generate review draft with claude (revu:pr skill)
         uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -61,7 +61,7 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             この PR (#${{ github.event.issue.number }}, リポジトリ
-            ${{ github.repository }}) を `review-pr` スキルでレビューしてください。
+            ${{ github.repository }}) を `revu:pr` スキルでレビューしてください。
 
             出力先はスキルの規約に従ってください（`revu pr prepare` が返す
             review_dir 配下）。このワークフローが出力先を指定することはありません。

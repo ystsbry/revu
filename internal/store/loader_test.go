@@ -92,7 +92,7 @@ pr:
   head_sha: abc
   base_branch: main
 generated_at: 2026-05-03T14:30:00+09:00
-generated_by: {tool: claude-code, skill: review-pr, model: x}
+generated_by: {tool: claude-code, skill: revu:pr, model: x}
 review_event: COMMENT
 summary_file: summary.md
 comments: []

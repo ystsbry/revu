@@ -1,5 +1,5 @@
 // Package guideline resolves user-specified review-guideline files
-// (additional context the review-pr skill reads alongside its built-in
+// (additional context the revu:pr skill reads alongside its built-in
 // viewpoints).
 //
 // Guideline paths come from each config layer's [review] guidelines = [...]
@@ -40,7 +40,7 @@ func List() ([]Resolved, error) {
 
 // Paths returns just the absolute paths of guidelines whose files
 // currently exist. Suitable for piping into a shell `Read` loop in the
-// review-pr skill.
+// revu:pr skill.
 func Paths() ([]string, error) {
 	all, err := List()
 	if err != nil {

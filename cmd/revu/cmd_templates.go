@@ -15,7 +15,7 @@ func newTemplatesCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "templates",
 		Short: "Resolve and inspect user-managed review templates",
-		Long: `revu templates exposes the file-resolution layer the review-pr skill uses
+		Long: `revu templates exposes the file-resolution layer the revu:pr skill uses
 when generating reviews. Templates are looked up across config layers,
 highest priority first:
 

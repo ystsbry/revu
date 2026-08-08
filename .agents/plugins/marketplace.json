@@ -1,0 +1,11 @@
+{
+  "name": "revu",
+  "description": "revu のスキル群を Codex プラグインとして配布するローカルマーケットプレース。",
+  "plugins": [
+    {
+      "name": "revu",
+      "description": "PR review pipeline backed by the revu CLI. Provides revu:pr to generate reviews consumable by revu, and revu:edit to safely edit generated review data.",
+      "source": { "source": "local", "path": "./plugin" }
+    }
+  ]
+}

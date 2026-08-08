@@ -8,7 +8,7 @@ Claude Code または OpenAI Codex CLI が生成した PR レビューを TUI �
 
 LLM は PR レビューの下書きを定型観点で機械的に流せる一方、生成物をそのまま GitHub に投稿すると質が荒く・誤検出が混じり・責任の所在もあいまいになります。revu は **「AI が下書き → 人間が TUI で取捨選択 → GitHub に投稿」** の中間レイヤーを担い、生成スピードと人間のキュレーションを両立させます。
 
-- **生成は内蔵しない**: Claude Code の review-pr skill が担当。revu は LLM を持たない
+- **生成は内蔵しない**: Claude Code の revu:pr skill が担当。revu は LLM を持たない
 - **ファイルで触れる**: review.yml + Markdown でローカルに置かれ、`$EDITOR` でも `git` でも介入できる
 - **投稿は明示確認**: head_sha 不一致や二重投稿などを安全装置で止め、`submit` のタイプ確認を要求する
 - **チームで揃えやすい**: 設定・テンプレート・コーディング規約を user / `.revu` / `.revu-local` の 3 層で重ねられる
@@ -22,7 +22,7 @@ LLM は PR レビューの下書きを定型観点で機械的に流せる一方
 ## 全体ワークフロー
 
 ```
-[1] Claude Code / Codex CLI で review-pr skill を起動
+[1] Claude Code / Codex CLI で revu:pr skill を起動
         または
     revu review [PR_NUMBER]            ← cwd リポジトリで自分にレビュー依頼が来ている PR
                                          を選び、内部で claude CLI を起動してレビュー生成
@@ -72,44 +72,45 @@ make uninstall PREFIX=$HOME/.local      # 別 PREFIX で入れた場合
 ## 必要なもの
 
 - Go 1.23 以上
-- `gh` CLI（`revu submit` および `review-pr` skill で使用、`gh auth login` 済みであること）
+- `gh` CLI（`revu submit` および `revu:pr` skill で使用、`gh auth login` 済みであること）
 - 投稿対象 PR のローカル clone（`revu open` を実行する場所）
-- Claude Code または OpenAI Codex CLI（レビュー生成に `review-pr` skill を使う場合。`revu review` は既定で claude、`--codex` で codex を起動）
+- Claude Code または OpenAI Codex CLI（レビュー生成に `revu:pr` skill を使う場合。`revu review` は既定で claude、`--codex` で codex を起動）
 
-## review-pr skill のインストール
+## revu プラグイン（スキル）のインストール
 
-レビュー生成は同じ `review-pr` skill (`skills/review-pr/SKILL.md`) を、Claude Code と OpenAI Codex CLI の両方から呼べます。skill 本体は 1 つで、ランタイムだけ差し替わります。
+スキルはすべて `plugin/` 配下の revu プラグインとして配布します。レビュー生成の `revu:pr` とレビューデータ編集の `revu:edit` の 2 スキル構成で、同じプラグインを Claude Code と OpenAI Codex CLI の両方から呼べます。skill 本体は 1 つで、ランタイムだけ差し替わります。
 
 ### Claude Code
 
-本リポジトリの `skills/review-pr/` を `~/.claude/skills/` にシンボリックリンク:
+`plugin/` を skills-dir プラグインとして `~/.claude/skills/revu` にシンボリックリンクします:
 
 ```bash
-ln -s "$PWD/skills/review-pr" "$HOME/.claude/skills/review-pr"
+make install-skills
+# アンインストールは make uninstall-skills
 ```
 
-Claude Code に `/review-pr <PR_NUMBER>` と入力すると skill が起動し、`~/.revu/{owner}/{repo}/pr-{N}/{sha[:7]}/` 配下にレビューを書き出します（SHA は PR の `head_sha` 先頭 7 文字）。
+Claude Code に `/revu:pr <PR_NUMBER>` と入力すると skill が起動し、`~/.revu/{owner}/{repo}/pr-{N}/{sha[:7]}/` 配下にレビューを書き出します（SHA は PR の `head_sha` 先頭 7 文字）。
 
 ```
-/review-pr 123
-/review-pr 123 --focus security,perf
+/revu:pr 123
+/revu:pr 123 --focus security,perf
+/revu:edit c3 を reject して
 ```
 
 ### OpenAI Codex CLI
 
-Codex CLI 用には skill ディレクトリを `~/.agents/skills/` にインストールする必要があります。直接 `ln -s` するとファイル単位のシンボリックリンクが落ちてしまう (openai/codex#15756) ので、付属スクリプトを使います:
+Codex CLI 用には、本リポジトリをプラグインマーケットプレース（`.agents/plugins/marketplace.json` → `./plugin`）として登録し、そこから revu プラグインをインストールします。付属スクリプトが両方をまとめて実行します:
 
 ```bash
 scripts/install-codex.sh
-# 別のディレクトリにインストールしたいとき:
-AGENTS_HOME=$HOME/.config/agents scripts/install-codex.sh --copy
+# アンインストールは scripts/install-codex.sh --uninstall
 ```
 
-インストール後 Codex を再起動すると、対話プロンプトで `$review-pr <PR_NUMBER>` が使えるようになります:
+Codex はプラグインを `~/.codex/plugins/cache/` に**コピー**するため、リポジトリを更新したらスクリプトを再実行してください。インストール後 Codex を再起動すると、対話プロンプトで `$revu:pr <PR_NUMBER>` が使えるようになります:
 
 ```
-$review-pr 123
-$review-pr 123 --focus security,perf
+$revu:pr 123
+$revu:pr 123 --focus security,perf
 ```
 
 `revu review --codex` はこの skill を `codex exec --json` 経由で非対話的に起動します。
@@ -197,7 +198,7 @@ revu review 42 --codex --no-resume --json
 
 ## テンプレートのカスタマイズ
 
-`review-pr` skill が生成するサマリとインラインコメントの構造はテンプレートで決まっています。デフォルトは `~/.claude/skills/review-pr/templates/` 配下:
+`revu:pr` skill が生成するサマリとインラインコメントの構造はテンプレートで決まっています。デフォルトは `~/.claude/skills/revu/skills/pr/templates/` 配下:
 
 - `summary.md.tmpl` — PR 全体サマリ
 - `inline-comment.md.tmpl` — 各インラインコメント
@@ -214,7 +215,7 @@ skill は `revu templates path <NAME>` を呼んで上記を解決し、いず�
 ```bash
 # プロジェクトでサマリだけ揃えたいケース
 mkdir -p .revu/templates
-cp ~/.claude/skills/review-pr/templates/summary.md.tmpl .revu/templates/
+cp ~/.claude/skills/revu/skills/pr/templates/summary.md.tmpl .revu/templates/
 # ↑ お手本としてコピーしてから編集する
 ```
 
@@ -252,8 +253,8 @@ $ revu guidelines list
 | コマンド | 用途 |
 |---|---|
 | `revu version` | バージョン表示 |
-| `revu review [PR_NUMBER]` | 自分にレビュー依頼が来ている PR を選び、`claude` CLI で `/review-pr` を実行して生成された結果を TUI で開く |
-| `revu review [PR_NUMBER] --codex` | 同上だが `claude` の代わりに `codex` CLI で `$review-pr` skill を起動（`scripts/install-codex.sh` で skill のインストールが必要） |
+| `revu review [PR_NUMBER]` | 自分にレビュー依頼が来ている PR を選び、`claude` CLI で `/revu:pr` を実行して生成された結果を TUI で開く |
+| `revu review [PR_NUMBER] --codex` | 同上だが `claude` の代わりに `codex` CLI で `$revu:pr` skill を起動（`scripts/install-codex.sh` でプラグインのインストールが必要） |
 | `revu review PR_NUMBER --no-resume` | レビューを生成した時点で終了し、対話 TUI に入らない（[非対話モード](#非対話モードci--自動化から呼ぶ)） |
 | `revu review PR_NUMBER --no-resume --json` | 同上で、結果を JSON で標準出力（進捗は標準エラーへ） |
 | `revu validate [dir]` | review.yml と Markdown の整合性チェック |
@@ -389,7 +390,7 @@ default_event = "COMMENT"
 
 # severity 定義。省略時は組み込みの 4 段階 (critical / major / minor / nit)。
 # 1 件でも定義すると組み込みは破棄され、ここに書いた集合だけが有効になる。
-# review-pr skill は `revu severities --json` でこの定義を読み取って
+# revu:pr skill は `revu severities --json` でこの定義を読み取って
 # コメント生成と review_event 判定に使う。
 #
 # [[review.severity]]

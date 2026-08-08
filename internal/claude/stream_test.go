@@ -13,7 +13,7 @@ func TestRelayProgress(t *testing.T) {
 		`{"type":"system","subtype":"init","session_id":"x"}`,
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"I'll start by reading the SKILL.md.\nThen run revu."}]}}`,
 		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"revu pr prepare 231","description":"fetch PR metadata"}}]}}`,
-		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/home/u/.claude/skills/review-pr/SKILL.md"}}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/home/u/.claude/skills/revu/skills/pr/SKILL.md"}}]}}`,
 		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"file_path":"/home/u/.revu/o/r/pr-1/comments/c1-app-86.md"}}]}}`,
 		`{"type":"rate_limit_event","ignored":true}`,
 		`{"type":"result","subtype":"success","duration_ms":45123,"total_cost_usd":0.456,"num_turns":12}`,

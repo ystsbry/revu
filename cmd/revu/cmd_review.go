@@ -19,7 +19,7 @@ import (
 	"github.com/ystsbry/revu/internal/tui/picker"
 )
 
-// reviewEngine names the runtime that drives the /review-pr skill.
+// reviewEngine names the runtime that drives the /revu:pr skill.
 type reviewEngine string
 
 const (
@@ -74,12 +74,12 @@ func newReviewCmdWith(deps reviewDeps) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "review [PR_NUMBER]",
 		Short: "Generate a review for a PR and drop into the agent's interactive TUI",
-		Long: `Generate a review via the review-pr skill, then resume the same agent
+		Long: `Generate a review via the revu:pr skill, then resume the same agent
 session interactively so you can iterate on the review.
 
 The skill is driven by either the local "claude" CLI (default) or the
 local "codex" CLI when --codex is given. In both cases the skill itself
-(skills/review-pr/SKILL.md) is the single source of truth — only the
+(skills/revu:pr/SKILL.md) is the single source of truth — only the
 runtime that loads it differs.
 
 Without an argument, fetches PRs awaiting your review (gh's
@@ -109,7 +109,7 @@ Non-interactive mode (CI, background workers):
   agent is given an empty stdin so it cannot block on a terminal that a
   CI runner does not have.
 
-The repository is always resolved from the cwd git remote: the review-pr
+The repository is always resolved from the cwd git remote: the revu:pr
 skill runs in cwd, so CI must invoke revu from inside the checkout.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -147,9 +147,9 @@ skill runs in cwd, so CI must invoke revu from inside the checkout.`,
 			})
 		},
 	}
-	cmd.Flags().StringVar(&focus, "focus", "", "categories to focus on, passed through to /review-pr (e.g. \"security,perf\")")
-	cmd.Flags().BoolVar(&useClaude, "claude", false, "drive the review-pr skill via the claude CLI (default if neither flag is set)")
-	cmd.Flags().BoolVar(&useCodex, "codex", false, "drive the review-pr skill via the codex CLI instead of claude")
+	cmd.Flags().StringVar(&focus, "focus", "", "categories to focus on, passed through to /revu:pr (e.g. \"security,perf\")")
+	cmd.Flags().BoolVar(&useClaude, "claude", false, "drive the revu:pr skill via the claude CLI (default if neither flag is set)")
+	cmd.Flags().BoolVar(&useCodex, "codex", false, "drive the revu:pr skill via the codex CLI instead of claude")
 	cmd.Flags().BoolVar(&noResume, "no-resume", false, "exit after generating the review instead of entering the agent's TUI (requires PR_NUMBER)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the result as JSON on stdout, with progress on stderr (requires --no-resume)")
 	cmd.MarkFlagsMutuallyExclusive("claude", "codex")
@@ -302,7 +302,7 @@ type reviewGenResult struct {
 	SessionID string `json:"session_id,omitempty"`
 }
 
-// generateReview runs the review-pr skill and writes the agent's identity
+// generateReview runs the revu:pr skill and writes the agent's identity
 // back into review.yml's generated_by. It never resumes: whether to drop
 // into the agent's TUI is the caller's decision.
 func (deps reviewDeps) generateReview(ctx context.Context, opts reviewGenOptions) (reviewGenResult, error) {
@@ -315,7 +315,7 @@ func (deps reviewDeps) generateReview(ctx context.Context, opts reviewGenOptions
 }
 
 func (deps reviewDeps) generateReviewClaude(ctx context.Context, opts reviewGenOptions) (reviewGenResult, error) {
-	fmt.Fprintf(opts.Progress, "Generating review for %s#%d via claude --print /review-pr ...\n\n", opts.Slug, opts.PRNumber)
+	fmt.Fprintf(opts.Progress, "Generating review for %s#%d via claude --print /revu:pr ...\n\n", opts.Slug, opts.PRNumber)
 
 	result, err := deps.runClaude(ctx, claude.ReviewArgs{
 		PRNumber:  opts.PRNumber,
@@ -348,7 +348,7 @@ func (deps reviewDeps) generateReviewClaude(ctx context.Context, opts reviewGenO
 }
 
 func (deps reviewDeps) generateReviewCodex(ctx context.Context, opts reviewGenOptions) (reviewGenResult, error) {
-	fmt.Fprintf(opts.Progress, "Generating review for %s#%d via codex exec $review-pr ...\n\n", opts.Slug, opts.PRNumber)
+	fmt.Fprintf(opts.Progress, "Generating review for %s#%d via codex exec $revu:pr ...\n\n", opts.Slug, opts.PRNumber)
 
 	result, err := deps.runCodex(ctx, codex.ReviewArgs{
 		PRNumber:  opts.PRNumber,

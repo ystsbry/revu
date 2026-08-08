@@ -17,7 +17,7 @@ revu はこの「LLM の生成物を GitHub に流す前に人間がキュレー
 
 revu は **AI が下書きしたレビューを、人間が取捨選択して GitHub に投稿する道具** です。
 
-- レビューの **生成** は Claude Code の review-pr skill が担当（revu 自身は LLM を内蔵しない）
+- レビューの **生成** は Claude Code の revu:pr skill が担当（revu 自身は LLM を内蔵しない）
 - 生成物は `~/.revu/{owner}/{repo}/pr-{N}/{sha[:7]}/` 配下に YAML + Markdown で書き出される
 - TUI (`revu open`) で 1 件ずつ accept / reject / edit
 - 残ったものを `revu submit` で GitHub に投稿。投稿は人間の明示確認を要求

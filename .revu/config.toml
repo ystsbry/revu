@@ -20,7 +20,7 @@ horizontal_threshold = 100
 # 新規レビューの review_event 既定値（情報用）
 default_event = "COMMENT"
 
-# レビュー時に review-pr skill が読み込む追加のガイドライン。
+# レビュー時に revu:pr skill が読み込む追加のガイドライン。
 # パスは **この config.toml からの相対** で解決される。
 # レイヤー（user / .revu / .revu-local）で連結されるので、
 # 個人ガイドラインを .revu-local/config.toml で追加してもよい。
@@ -31,7 +31,7 @@ guidelines = [
 # severity 定義。コメントアウトすると組み込みの 4 段階
 # (critical / major / minor / nit) が使われる。
 # 1 件でも定義すると組み込みは破棄され、ここに書いた集合だけが有効になる。
-# review-pr skill は `revu severities --json` でこの定義を読み取って
+# revu:pr skill は `revu severities --json` でこの定義を読み取って
 # コメント生成と review_event 判定に使う。
 
 [[review.severity]]

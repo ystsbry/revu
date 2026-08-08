@@ -10,7 +10,7 @@ import (
 	"github.com/ystsbry/revu/internal/model"
 )
 
-// newSeveritiesCmd exposes the active severity registry. The review-pr
+// newSeveritiesCmd exposes the active severity registry. The revu:pr
 // skill consumes `--json` to discover the user-configured severity set
 // (name, level, description, review_event, color) and adapts its
 // generated review_event accordingly.
@@ -22,7 +22,7 @@ func newSeveritiesCmd() *cobra.Command {
 		Long: `Print the severities revu accepts in review.yml.
 
 Without --json, prints a human-readable table. With --json, prints a
-machine-readable list intended for the review-pr skill (or other tools)
+machine-readable list intended for the revu:pr skill (or other tools)
 to discover the user's configured severities.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			reg := model.ActiveSeverityRegistry()
@@ -34,7 +34,7 @@ to discover the user's configured severities.`,
 			return writeSeveritiesTable(cmd, defs)
 		},
 	}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON for machine consumption (review-pr skill)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSON for machine consumption (revu:pr skill)")
 	return cmd
 }
 

@@ -14,13 +14,13 @@ import (
 	"github.com/ystsbry/revu/internal/store"
 )
 
-// newPRCmd groups PR-related helpers used by the review-pr skill so the
+// newPRCmd groups PR-related helpers used by the revu:pr skill so the
 // permission allowlist needs only `Bash(revu *)` instead of multiple
 // `Bash(gh *)` and `Bash(mkdir *)` entries.
 func newPRCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pr",
-		Short: "PR helpers used by the review-pr skill",
+		Short: "PR helpers used by the revu:pr skill",
 	}
 	cmd.AddCommand(newPRPrepareCmd())
 	cmd.AddCommand(newPRDiffCmd())
@@ -45,7 +45,7 @@ func newPRPrepareCmd() *cobra.Command {
 		Use:   "prepare <PR_NUMBER>",
 		Short: "Fetch PR metadata, create the review output dir, and print everything as JSON",
 		Long: `Fetch PR metadata via gh, create ~/.revu/{owner}/{repo}/pr-{N}/{sha[:7]}/comments/,
-and print a JSON object the review-pr skill can consume directly.
+and print a JSON object the revu:pr skill can consume directly.
 
 Replaces the skill's previous "gh pr view" + "mkdir -p" steps with one
 revu call so the permission allowlist needs only Bash(revu *).`,

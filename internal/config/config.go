@@ -65,14 +65,14 @@ type ReviewConfig struct {
 	DefaultEvent string `toml:"default_event"`
 
 	// Severities defines the set of severities revu accepts in review.yml
-	// and exposes to the review-pr skill. When empty, revu falls back to
+	// and exposes to the revu:pr skill. When empty, revu falls back to
 	// the built-in 4 levels (critical / major / minor / nit). When the
 	// user provides one or more entries, the entire built-in list is
 	// replaced (no per-name merging).
 	Severities []SeverityDef `toml:"severity"`
 
 	// Guidelines is the list of paths to additional review-guidance files
-	// (markdown, plain text) that the review-pr skill loads alongside its
+	// (markdown, plain text) that the revu:pr skill loads alongside its
 	// built-in viewpoints. Paths in the TOML may be relative to the
 	// containing config.toml; after Load() they are absolute and
 	// concatenated across layers (user → .revu → .revu-local). Missing
@@ -373,7 +373,7 @@ horizontal_threshold = 100
 # Default review_event for new reviews (currently informational).
 default_event = "COMMENT"
 
-# Additional review-guidance files the review-pr skill reads alongside its
+# Additional review-guidance files the revu:pr skill reads alongside its
 # built-in viewpoints. Paths are relative to this config.toml. Layers
 # (user / .revu / .revu-local) are concatenated, so a project can append
 # its own rules without losing global ones. Missing files are reported by
@@ -387,7 +387,7 @@ default_event = "COMMENT"
 # (critical / major / minor / nit). When you define one entry, the whole
 # list is replaced. "level" expresses relative importance (higher = more
 # severe). "review_event" is the GitHub review event a comment of this
-# severity implies; the review-pr skill picks the strongest event across
+# severity implies; the revu:pr skill picks the strongest event across
 # all comments (REQUEST_CHANGES > COMMENT > APPROVE).
 #
 # [[review.severity]]
