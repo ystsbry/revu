@@ -326,3 +326,41 @@ func TestRepoListRendersWithoutASize(t *testing.T) {
 		t.Errorf("dashboard rendered nothing before its first resize")
 	}
 }
+
+// mouseRecorder captures mouse messages a screen receives.
+type mouseRecorder struct {
+	*testScreen
+	mice []tea.MouseMsg
+}
+
+func (m *mouseRecorder) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if mm, ok := msg.(tea.MouseMsg); ok {
+		m.mice = append(m.mice, mm)
+	}
+	return m, nil
+}
+
+// Screens hit-test in their own coordinates, so the shell must shift the
+// pointer up past the breadcrumb row before forwarding — and swallow
+// clicks on the breadcrumb itself.
+func TestRootTranslatesMouseCoordinates(t *testing.T) {
+	t.Parallel()
+	rec := &mouseRecorder{testScreen: newTestScreen("L0")}
+	r := NewRoot(rec)
+
+	r.Update(tea.MouseMsg{X: 3, Y: 0, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	if len(rec.mice) != 0 {
+		t.Fatalf("breadcrumb click must not reach the screen, got %v", rec.mice)
+	}
+
+	r.Update(tea.MouseMsg{X: 3, Y: 5, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	if len(rec.mice) != 1 {
+		t.Fatalf("mouse not forwarded: %v", rec.mice)
+	}
+	if got := rec.mice[0].Y; got != 4 {
+		t.Errorf("Y = %d, want 4 (shifted past the breadcrumb)", got)
+	}
+	if got := rec.mice[0].X; got != 3 {
+		t.Errorf("X = %d, want 3 (unchanged)", got)
+	}
+}

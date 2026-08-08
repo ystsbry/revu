@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	zone "github.com/lrstanley/bubblezone"
 
 	"github.com/ystsbry/revu/internal/filter"
 	"github.com/ystsbry/revu/internal/model"
@@ -37,6 +38,7 @@ const (
 
 type App struct {
 	km       keys.KeyMap
+	zones    *zone.Manager
 	list     *views.List
 	detail   *views.Detail
 	summary  *views.Summary
@@ -83,9 +85,10 @@ func NewApp(cfg Config) *App {
 	ti := textinput.New()
 	ti.Prompt = ":"
 	ti.CharLimit = 64
-	return &App{
-		km:   km,
-		list: views.NewList(cfg.Review, km),
+	a := &App{
+		km:    km,
+		zones: zone.New(),
+		list:  views.NewList(cfg.Review, km),
 		detail: views.NewDetail(cfg.Review, cfg.RepoRoot, km, 0, views.DetailSettings{
 			CodeContextLines:    cfg.Settings.CodeContextLines,
 			HorizontalThreshold: cfg.Settings.HorizontalThreshold,
@@ -100,6 +103,10 @@ func NewApp(cfg Config) *App {
 		settings: cfg.Settings,
 		cmdInput: ti,
 	}
+	a.list.AttachZones(a.zones)
+	a.detail.AttachZones(a.zones)
+	a.summary.AttachZones(a.zones)
+	return a
 }
 
 func (a *App) Init() tea.Cmd {
@@ -119,8 +126,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = m.Width
 		a.height = m.Height
-		// Reserve one row for the bottom command/status bar.
-		fwd := tea.WindowSizeMsg{Width: m.Width, Height: m.Height - 1}
+		// Reserve one row for the tab bar and one for the bottom
+		// command/status bar.
+		fwd := tea.WindowSizeMsg{Width: m.Width, Height: m.Height - 2}
 		a.forwardToActive(fwd)
 		return a, nil
 
@@ -204,6 +212,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.setInfo("submit complete")
 		return a, nil
 
+	case tea.MouseMsg:
+		return a.updateMouse(m)
+
 	case tea.KeyMsg:
 		if a.cmdMode {
 			return a.updateCommandMode(m)
@@ -243,6 +254,89 @@ func (a *App) updateNormalMode(m tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return a.delegateToActive(m)
 }
 
+// Tab-bar zone ids, owned by the app (the views own their zones).
+const (
+	zoneTabList    = "app:tab:list"
+	zoneTabSummary = "app:tab:summary"
+	zoneTabDetail  = "app:tab:detail"
+)
+
+// updateMouse routes mouse input: the tab bar switches views, everything
+// else belongs to the active view. The help overlay closes on any click.
+func (a *App) updateMouse(m tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if a.showHelp {
+		if leftClick(m) {
+			a.showHelp = false
+		}
+		return a, nil
+	}
+	if a.cmdMode {
+		return a, nil
+	}
+	if leftClick(m) {
+		switch {
+		case a.zoneHit(zoneTabList, m):
+			a.state = viewList
+			a.forwardSize()
+			return a, nil
+		case a.zoneHit(zoneTabSummary, m):
+			a.state = viewSummary
+			a.forwardSize()
+			return a, nil
+		case a.zoneHit(zoneTabDetail, m):
+			if len(a.review.Comments) > 0 {
+				a.detail.SetIndex(a.detailTabIndex())
+				a.state = viewDetail
+				a.forwardSize()
+			}
+			return a, nil
+		}
+	}
+	return a.delegateToActive(m)
+}
+
+func leftClick(m tea.MouseMsg) bool {
+	return m.Button == tea.MouseButtonLeft && m.Action == tea.MouseActionPress
+}
+
+func (a *App) zoneHit(id string, m tea.MouseMsg) bool {
+	info := a.zones.Get(id)
+	return info != nil && !info.IsZero() && info.InBounds(m)
+}
+
+// detailTabIndex picks which comment the Detail tab opens: the list
+// cursor when it is on a comment, else wherever detail was last.
+func (a *App) detailTabIndex() int {
+	if c := a.list.Cursor(); c >= 0 {
+		return c
+	}
+	return a.detail.Index()
+}
+
+// tabBar renders the clickable view switcher shown above every view.
+func (a *App) tabBar() string {
+	active := lipgloss.NewStyle().Bold(true).Padding(0, 1).
+		Background(lipgloss.Color("57")).Foreground(lipgloss.Color("229"))
+	inactive := lipgloss.NewStyle().Padding(0, 1).Faint(true)
+
+	tab := func(id, label string, on bool) string {
+		st := inactive
+		if on {
+			st = active
+		}
+		return a.zones.Mark(id, st.Render(label))
+	}
+	tabs := []string{
+		tab(zoneTabList, "List", a.state == viewList),
+		tab(zoneTabSummary, "Summary", a.state == viewSummary),
+	}
+	if len(a.review.Comments) > 0 {
+		tabs = append(tabs, tab(zoneTabDetail, "Detail", a.state == viewDetail || a.state == viewEdit))
+	}
+	return lipgloss.NewStyle().Padding(0, 1).
+		Render(strings.Join(tabs, " "))
+}
+
 func (a *App) delegateToActive(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch a.state {
 	case viewDetail:
@@ -277,7 +371,7 @@ func (a *App) forwardSize() {
 	if a.width == 0 || a.height == 0 {
 		return
 	}
-	a.forwardToActive(tea.WindowSizeMsg{Width: a.width, Height: a.height - 1})
+	a.forwardToActive(tea.WindowSizeMsg{Width: a.width, Height: a.height - 2})
 }
 
 func (a *App) updateCommandMode(m tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -433,7 +527,7 @@ func (a *App) tryQuit() (tea.Model, tea.Cmd) {
 
 func (a *App) View() string {
 	if a.showHelp {
-		return helpView(a.width, a.height)
+		return a.zones.Scan(helpView(a.width, a.height))
 	}
 	var body string
 	switch a.state {
@@ -447,7 +541,11 @@ func (a *App) View() string {
 		body = a.list.View()
 	}
 	bar := a.bottomBar()
-	return lipgloss.JoinVertical(lipgloss.Left, body, bar)
+	// Scan at the outermost point: it strips the zone markers and records
+	// where every marked region landed, which is what click hit-testing
+	// reads. When App is embedded (the dashboard), the host offsets mouse
+	// coordinates instead, so these positions stay App-relative.
+	return a.zones.Scan(lipgloss.JoinVertical(lipgloss.Left, a.tabBar(), body, bar))
 }
 
 func (a *App) bottomBar() string {
@@ -493,7 +591,7 @@ func (a *App) IsEdit() bool    { return a.state == viewEdit }
 // hosts App as one screen on its stack — can reach the model via NewApp
 // without starting a second program against the same tty.
 func NewProgram(cfg Config) *tea.Program {
-	return tea.NewProgram(NewApp(cfg), tea.WithAltScreen())
+	return tea.NewProgram(NewApp(cfg), tea.WithAltScreen(), tea.WithMouseCellMotion())
 }
 
 // Run starts the bubbletea program.

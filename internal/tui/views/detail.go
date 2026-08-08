@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	zone "github.com/lrstanley/bubblezone"
 
 	"github.com/ystsbry/revu/internal/diff"
 	"github.com/ystsbry/revu/internal/model"
@@ -46,6 +47,7 @@ type Detail struct {
 	codeContextLines    int
 	horizontalThreshold int
 	preImage            PreImageSource
+	zones               *zone.Manager
 
 	width  int
 	height int
@@ -89,6 +91,9 @@ func NewDetail(r *model.Review, repoRoot string, km keys.KeyMap, index int, s De
 	}
 }
 
+// AttachZones enables mouse hit-testing through the app's zone manager.
+func (d *Detail) AttachZones(z *zone.Manager) { d.zones = z }
+
 func (d *Detail) Init() tea.Cmd { return nil }
 
 // SetIndex changes the focused comment. Useful when the parent app re-enters
@@ -105,6 +110,8 @@ func (d *Detail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		d.width = m.Width
 		d.height = m.Height
+	case tea.MouseMsg:
+		return d.updateMouse(m)
 	case tea.KeyMsg:
 		// Bare arrow / page keys scroll the markdown pane within the
 		// current comment. j/k/n/p still navigate between comments.
@@ -142,33 +149,19 @@ func (d *Detail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch {
 		case key.Matches(m, d.keys.Down), m.String() == "n":
-			d.index = clampIndex(d.index+1, len(d.review.Comments))
-			d.mdScroll = 0
+			d.move(+1)
 		case key.Matches(m, d.keys.Up), m.String() == "p":
-			d.index = clampIndex(d.index-1, len(d.review.Comments))
-			d.mdScroll = 0
+			d.move(-1)
 		case key.Matches(m, d.keys.Accept):
-			if c := d.current(); c != nil {
-				c.Status = model.StatusAccepted
-				return d, dirty()
-			}
+			return d, d.setStatus(model.StatusAccepted)
 		case key.Matches(m, d.keys.Reject):
-			if c := d.current(); c != nil {
-				c.Status = model.StatusRejected
-				return d, dirty()
-			}
+			return d, d.setStatus(model.StatusRejected)
 		case key.Matches(m, d.keys.Pending):
-			if c := d.current(); c != nil {
-				c.Status = model.StatusPending
-				return d, dirty()
-			}
+			return d, d.setStatus(model.StatusPending)
 		case m.String() == "l":
 			return d, func() tea.Msg { return GoToListMsg{} }
 		case m.String() == "e":
-			if c := d.current(); c != nil {
-				path := filepath.Join(d.review.BaseDir, c.BodyFile)
-				return d, func() tea.Msg { return EditMsg{Path: path} }
-			}
+			return d, d.editBody()
 		case m.String() == "m":
 			if d.current() != nil {
 				idx := d.index
@@ -177,6 +170,75 @@ func (d *Detail) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return d, nil
+}
+
+// updateMouse: the wheel scrolls the markdown pane; clicks drive the
+// action bar. Every button reuses the exact handler its key equivalent
+// runs, so mouse and keyboard cannot drift apart.
+func (d *Detail) updateMouse(m tea.MouseMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case m.Button == tea.MouseButtonWheelUp:
+		d.scrollMD(-3)
+		return d, nil
+	case m.Button == tea.MouseButtonWheelDown:
+		d.scrollMD(+3)
+		return d, nil
+	case !leftClick(m):
+		return d, nil
+	}
+
+	switch {
+	case hit(d.zones, ZoneDetailAccept, m):
+		return d, d.setStatus(model.StatusAccepted)
+	case hit(d.zones, ZoneDetailReject, m):
+		return d, d.setStatus(model.StatusRejected)
+	case hit(d.zones, ZoneDetailPending, m):
+		return d, d.setStatus(model.StatusPending)
+	case hit(d.zones, ZoneDetailPrev, m):
+		d.move(-1)
+	case hit(d.zones, ZoneDetailNext, m):
+		d.move(+1)
+	case hit(d.zones, ZoneDetailEdit, m):
+		return d, d.editBody()
+	case hit(d.zones, ZoneDetailList, m):
+		return d, func() tea.Msg { return GoToListMsg{} }
+	}
+	return d, nil
+}
+
+// scrollMD moves the markdown pane by delta lines, clamped to content.
+func (d *Detail) scrollMD(delta int) {
+	d.mdScroll += delta
+	if d.mdScroll > d.mdMaxScroll {
+		d.mdScroll = d.mdMaxScroll
+	}
+	if d.mdScroll < 0 {
+		d.mdScroll = 0
+	}
+}
+
+// move shifts focus to an adjacent comment.
+func (d *Detail) move(delta int) {
+	d.index = clampIndex(d.index+delta, len(d.review.Comments))
+	d.mdScroll = 0
+}
+
+func (d *Detail) setStatus(st model.Status) tea.Cmd {
+	c := d.current()
+	if c == nil {
+		return nil
+	}
+	c.Status = st
+	return dirty()
+}
+
+func (d *Detail) editBody() tea.Cmd {
+	c := d.current()
+	if c == nil {
+		return nil
+	}
+	path := filepath.Join(d.review.BaseDir, c.BodyFile)
+	return func() tea.Msg { return EditMsg{Path: path} }
 }
 
 func (d *Detail) View() string {
@@ -213,9 +275,25 @@ func (d *Detail) headerView(c *model.Comment) string {
 		c.ID, pos, c.Path, c.LineLabel(), c.Severity, c.Category, c.Status))
 }
 
+// footerView is the clickable action bar. Every button mirrors a key
+// (shown in its label) so both operation styles stay discoverable.
 func (d *Detail) footerView() string {
-	style := lipgloss.NewStyle().Faint(true).Padding(0, 1)
-	return style.Render("[a]ccept [r]eject [u]ndo  [n]ext [p]rev  [↑↓/Home/End]scroll  [e]dit body [m]eta  [l]ist  [:]cmd  [q]uit")
+	btn := lipgloss.NewStyle().
+		Padding(0, 1).
+		Background(lipgloss.Color("237")).
+		Foreground(lipgloss.Color("252"))
+	sep := " "
+	bar := []string{
+		mark(d.zones, ZoneDetailAccept, btn.Render("✓ accept (a)")),
+		mark(d.zones, ZoneDetailReject, btn.Render("✗ reject (r)")),
+		mark(d.zones, ZoneDetailPending, btn.Render("↺ undo (u)")),
+		mark(d.zones, ZoneDetailPrev, btn.Render("◀ prev (p)")),
+		mark(d.zones, ZoneDetailNext, btn.Render("next (n) ▶")),
+		mark(d.zones, ZoneDetailEdit, btn.Render("✎ edit (e)")),
+		mark(d.zones, ZoneDetailList, btn.Render("≡ list (l)")),
+	}
+	hint := lipgloss.NewStyle().Faint(true).Render("  wheel/[↑↓]scroll [m]eta [:]cmd [?]help")
+	return lipgloss.NewStyle().Padding(0, 1).Render(strings.Join(bar, sep) + hint)
 }
 
 func (d *Detail) renderCodePane(c *model.Comment, height int) string {
