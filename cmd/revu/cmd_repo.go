@@ -129,9 +129,16 @@ the user config. Re-adding a known slug updates its path.`,
 }
 
 func newRepoListCmd() *cobra.Command {
-	return &cobra.Command{
+	var all bool
+	var profileFlag string
+	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List registered repositories (all config layers merged)",
+		Short: "List registered repositories (filtered by the active profile)",
+		Long: `List registered repositories from all merged config layers.
+
+The active profile (see 'revu profile') narrows the output to its repos;
+--all ignores it and --profile <name> applies a different profile for
+this invocation only.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, _, err := config.Load()
 			if err != nil {
@@ -142,7 +149,25 @@ func newRepoListCmd() *cobra.Command {
 				fmt.Fprintln(out, "No repositories registered. Run `revu repo scan <root>` or `revu repo add <path>`.")
 				return nil
 			}
-			for _, r := range cfg.Repos {
+
+			switch {
+			case all:
+				cfg.ActiveProfile = ""
+			case profileFlag != "":
+				if _, ok := cfg.FindProfile(profileFlag); !ok && profileFlag != config.DefaultProfileName {
+					return fmt.Errorf("profile %q is not declared (see `revu profile list`)", profileFlag)
+				}
+				cfg.ActiveProfile = profileFlag
+			}
+
+			repos, missing, unknown := cfg.ActiveRepos()
+			if unknown != "" {
+				fmt.Fprintf(out, "warning: active profile %q is not declared; showing all repos\n", unknown)
+			} else if cfg.ActiveProfile != "" && cfg.ActiveProfile != config.DefaultProfileName {
+				fmt.Fprintf(out, "Profile: %s (%d/%d repos)\n", cfg.ActiveProfile, len(repos), len(cfg.Repos))
+			}
+
+			for _, r := range repos {
 				marker := ""
 				if _, err := os.Stat(r.Path); err != nil {
 					marker = "  (missing)"
@@ -153,9 +178,15 @@ func newRepoListCmd() *cobra.Command {
 				}
 				fmt.Fprintln(out, line)
 			}
+			for _, slug := range missing {
+				fmt.Fprintf(out, "%s  (in profile but not registered)\n", slug)
+			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&all, "all", false, "ignore the active profile and list every registered repo")
+	cmd.Flags().StringVar(&profileFlag, "profile", "", "list a specific profile's repos for this invocation")
+	return cmd
 }
 
 func newRepoRemoveCmd() *cobra.Command {

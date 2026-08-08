@@ -272,6 +272,8 @@ $ revu guidelines list
 | `revu repo add <path>` | clone を 1 つ登録（既存 slug はパス更新） |
 | `revu repo list` | 登録リポジトリの一覧（パス消失は `(missing)` 表示） |
 | `revu repo remove <slug>` | 登録を削除 |
+| `revu profile list` | プロファイル一覧と active の表示 |
+| `revu profile use <name>` | プロファイルを切り替え（`default` で解除） |
 | `revu config` | 現在の設定を表示 |
 | `revu config --init` | スターター `config.toml` を書き出す |
 | `revu severities` | 有効な severity 一覧を表示（`--json` で機械可読出力、skill が利用） |
@@ -290,6 +292,33 @@ revu repo list
 - 登録先はグローバル user config（`os.UserConfigDir()/revu/config.toml`）の `[[repo]]` ブロック
 - revu の機械編集は **`[[repo]]` ブロックだけ**を追記・置換・削除し、それ以外のコメント・設定はそのまま保持する
 - 登録済みの clone は `revu open` の clone 解決（cwd 不一致時のフォールバック）と、今後のダッシュボード機能で利用される
+
+### プロファイル（登録リポジトリの絞り込み）
+
+全件を登録したうえで、名前付きのサブセット「プロファイル」に分けられます。プロファイルは config に手で宣言し、切り替えは `revu profile use` で行います:
+
+```toml
+# config.toml
+[[profile]]
+name = "work"
+repos = ["acme/api", "acme/web"]
+
+[[profile]]
+name = "oss"
+repos = ["ystsbry/revu"]
+```
+
+```bash
+revu profile list           # 宣言済みプロファイルと active の確認
+revu profile use work       # 以後 repo list / ダッシュボードは work の 2 リポジトリだけ表示
+revu profile use default    # 解除（全件表示に戻る）
+revu repo list --all        # active profile を無視して一時的に全件表示
+revu repo list --profile oss  # 一時的に別プロファイルで表示
+```
+
+- `default` は予約名で「登録済み全件」を意味する（`[[profile]]` として宣言はできない）
+- 選択は user config の `active_profile` キーとして永続化される（`[[repo]]` と同じく、このキーの行だけを機械編集する）
+- プロファイルが参照する slug が未登録の場合は黙って落とさず、`repo list` / `profile list` が明示する
 
 ## TUI のキーバインド
 
