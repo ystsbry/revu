@@ -56,6 +56,8 @@ func newRootCmdWith(reviewCmdDeps reviewDeps) *cobra.Command {
 	cmd.AddCommand(newGuidelinesCmd())
 	cmd.AddCommand(newRepoCmd())
 	cmd.AddCommand(newProfileCmd())
+	cmd.AddCommand(newJobsCmd())
+	cmd.AddCommand(newReviewWorkerCmd())
 	return cmd
 }
 

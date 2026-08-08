@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/ystsbry/revu/internal/claude"
 	"github.com/ystsbry/revu/internal/codex"
 	"github.com/ystsbry/revu/internal/github"
+	"github.com/ystsbry/revu/internal/jobs"
 	"github.com/ystsbry/revu/internal/store"
 	"github.com/ystsbry/revu/internal/tui/picker"
 )
@@ -37,15 +39,23 @@ type reviewDeps struct {
 	resume    func(ctx context.Context, out io.Writer, engine reviewEngine, sessionID string) error
 	cwdSlug   func() (string, error)
 	now       func() time.Time
+
+	// Background-job seams (see cmd_review_worker.go / --bg).
+	cwdRoot     func() (string, error)
+	executable  func() (string, error)
+	spawnWorker func(revuBin string, j jobs.Job) (int, error)
 }
 
 func defaultReviewDeps() reviewDeps {
 	return reviewDeps{
-		runClaude: claude.RunReviewPR,
-		runCodex:  codex.RunReviewPR,
-		resume:    resumeReviewSession,
-		cwdSlug:   store.CurrentRepoSlug,
-		now:       time.Now,
+		runClaude:   claude.RunReviewPR,
+		runCodex:    codex.RunReviewPR,
+		resume:      resumeReviewSession,
+		cwdSlug:     store.CurrentRepoSlug,
+		now:         time.Now,
+		cwdRoot:     store.CwdRepoRoot,
+		executable:  os.Executable,
+		spawnWorker: jobs.SpawnWorker,
 	}
 }
 
@@ -70,6 +80,8 @@ func newReviewCmdWith(deps reviewDeps) *cobra.Command {
 		useCodex  bool
 		noResume  bool
 		asJSON    bool
+		bg        bool
+		repoSlug  string
 	)
 	cmd := &cobra.Command{
 		Use:   "review [PR_NUMBER]",
@@ -109,7 +121,15 @@ Non-interactive mode (CI, background workers):
   agent is given an empty stdin so it cannot block on a terminal that a
   CI runner does not have.
 
-The repository is always resolved from the cwd git remote: the revu:pr
+Background mode:
+
+  --bg registers the run in the job book (~/.revu/jobs) and spawns a
+  detached worker, returning immediately with the job id. Watch it with
+  "revu jobs list" / "revu jobs log <id>". PR_NUMBER is required, and
+  --repo <owner>/<repo> reviews a registered repository from anywhere —
+  the worker runs the skill inside the registered clone.
+
+The repository is otherwise resolved from the cwd git remote: the revu:pr
 skill runs in cwd, so CI must invoke revu from inside the checkout.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -126,15 +146,35 @@ skill runs in cwd, so CI must invoke revu from inside the checkout.`,
 			if asJSON && !noResume {
 				return errors.New("--json requires --no-resume")
 			}
-
-			slug, err := deps.cwdSlug()
-			if err != nil {
-				return fmt.Errorf("resolve cwd repo: %w (run revu review inside a git clone)", err)
+			if bg && (noResume || asJSON) {
+				return errors.New("--bg already exits after starting the job; it cannot combine with --no-resume/--json")
+			}
+			if repoSlug != "" && !bg {
+				return errors.New("--repo requires --bg (foreground reviews run the skill in cwd)")
 			}
 
-			prNumber, err := resolvePRNumber(ctx, cmd, args, slug, noResume)
+			slug := repoSlug
+			if slug == "" {
+				var err error
+				slug, err = deps.cwdSlug()
+				if err != nil {
+					return fmt.Errorf("resolve cwd repo: %w (run revu review inside a git clone, or use --bg --repo)", err)
+				}
+			}
+
+			prNumber, err := resolvePRNumber(ctx, cmd, args, slug, noResume || bg)
 			if err != nil || prNumber == 0 {
 				return err
+			}
+
+			if bg {
+				return deps.startBackgroundReview(cmd, reviewOptions{
+					Engine:   engine,
+					Slug:     slug,
+					PRNumber: prNumber,
+					Focus:    focus,
+					RepoSlug: repoSlug,
+				})
 			}
 
 			return deps.runReview(ctx, cmd, reviewOptions{
@@ -152,6 +192,8 @@ skill runs in cwd, so CI must invoke revu from inside the checkout.`,
 	cmd.Flags().BoolVar(&useCodex, "codex", false, "drive the revu:pr skill via the codex CLI instead of claude")
 	cmd.Flags().BoolVar(&noResume, "no-resume", false, "exit after generating the review instead of entering the agent's TUI (requires PR_NUMBER)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the result as JSON on stdout, with progress on stderr (requires --no-resume)")
+	cmd.Flags().BoolVar(&bg, "bg", false, "run the review as a detached background job and exit immediately (requires PR_NUMBER; see `revu jobs`)")
+	cmd.Flags().StringVar(&repoSlug, "repo", "", `with --bg: review a registered "owner/repo" instead of cwd (clone resolved from the [[repo]] registry)`)
 	cmd.MarkFlagsMutuallyExclusive("claude", "codex")
 	return cmd
 }
@@ -202,6 +244,8 @@ type reviewOptions struct {
 	Focus    string
 	NoResume bool
 	AsJSON   bool
+	// RepoSlug is the --repo flag value; non-empty only with --bg.
+	RepoSlug string
 }
 
 func (deps reviewDeps) runReview(ctx context.Context, cmd *cobra.Command, opts reviewOptions) error {
@@ -289,6 +333,8 @@ type reviewGenOptions struct {
 	// NotBefore rejects a review dir that predates this run. Zero accepts
 	// the newest review dir regardless of age.
 	NotBefore time.Time
+	// WorkDir is the clone the agent runs in. Empty means cwd.
+	WorkDir string
 }
 
 // reviewGenResult describes one generated review. It doubles as the --json
@@ -321,6 +367,7 @@ func (deps reviewDeps) generateReviewClaude(ctx context.Context, opts reviewGenO
 		PRNumber:  opts.PRNumber,
 		Focus:     opts.Focus,
 		OwnerRepo: opts.Slug,
+		WorkDir:   opts.WorkDir,
 		Progress:  opts.Progress,
 		Stdin:     opts.Stdin,
 		NotBefore: opts.NotBefore,
@@ -354,6 +401,7 @@ func (deps reviewDeps) generateReviewCodex(ctx context.Context, opts reviewGenOp
 		PRNumber:  opts.PRNumber,
 		Focus:     opts.Focus,
 		OwnerRepo: opts.Slug,
+		WorkDir:   opts.WorkDir,
 		Progress:  opts.Progress,
 		Stdin:     opts.Stdin,
 		NotBefore: opts.NotBefore,

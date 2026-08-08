@@ -38,6 +38,11 @@ type ReviewArgs struct {
 	// so the caller can resolve the output dir without re-running gh.
 	OwnerRepo string
 
+	// WorkDir is the directory claude runs in — the clone the skill's gh
+	// calls should target. Empty means the current directory, which is
+	// what interactive `revu review` wants.
+	WorkDir string
+
 	// Bin overrides the resolved claude binary path. Empty falls back to
 	// "claude" on PATH.
 	Bin string
@@ -129,6 +134,9 @@ func RunReviewPR(ctx context.Context, args ReviewArgs) (ReviewResult, error) {
 		"--verbose",
 		"--print", prompt,
 	)
+	// Empty WorkDir keeps exec's default (the caller's cwd), so the
+	// interactive path is byte-for-byte what it always was.
+	cmd.Dir = args.WorkDir
 	// The child's stderr and the relay's own diagnostics stay on
 	// os.Stderr on purpose: only stdout is a machine-readable channel for
 	// non-interactive callers, and they want claude's own errors visible.
