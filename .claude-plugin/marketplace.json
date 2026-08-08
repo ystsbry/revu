@@ -1,0 +1,14 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "revu",
+  "description": "revu CLI と連携する PR レビューパイプライン用プラグイン",
+  "owner": { "name": "ystsbry" },
+  "plugins": [
+    {
+      "name": "revu",
+      "description": "PR review pipeline backed by the revu CLI. Provides /revu:pr to generate reviews consumable by revu, and /revu:edit to safely edit generated review data.",
+      "category": "productivity",
+      "source": "./plugin"
+    }
+  ]
+}
