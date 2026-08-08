@@ -32,6 +32,10 @@ type ReviewArgs struct {
 	Focus     string
 	OwnerRepo string
 
+	// WorkDir is the clone codex targets via --cd. Empty means the
+	// current directory, matching the historical behaviour.
+	WorkDir string
+
 	// Bin overrides the resolved codex binary. Empty falls back to "codex".
 	Bin string
 
@@ -101,9 +105,13 @@ func RunReviewPR(ctx context.Context, args ReviewArgs) (ReviewResult, error) {
 		return ReviewResult{}, fmt.Errorf("create %s: %w", revuRoot, err)
 	}
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		return ReviewResult{}, fmt.Errorf("getwd: %w", err)
+	cwd := args.WorkDir
+	if cwd == "" {
+		var err error
+		cwd, err = os.Getwd()
+		if err != nil {
+			return ReviewResult{}, fmt.Errorf("getwd: %w", err)
+		}
 	}
 
 	cmd := exec.CommandContext(ctx, bin, buildExecArgs(prompt, cwd, revuRoot)...)

@@ -7,9 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The in-process tests drive cobra with fake engines, which cannot show
@@ -177,5 +179,104 @@ func TestE2EJSONWithoutNoResumeKeepsStdoutClean(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "--json requires --no-resume") {
 		t.Errorf("stderr should explain the rejected flag combination, got %q", stderr)
+	}
+}
+
+// --- background jobs (--bg) ------------------------------------------------
+
+// startBGJob runs `revu review 42 --bg` and returns the job id parsed from
+// its output.
+func startBGJob(t *testing.T, bin, workdir string, env []string) string {
+	t.Helper()
+	stdout, stderr, code := runRevu(t, bin, workdir, env, "review", "42", "--bg")
+	if code != 0 {
+		t.Fatalf("--bg exit code = %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	m := regexp.MustCompile(`job (\S+) \(pid (\d+)\)`).FindStringSubmatch(stdout)
+	if m == nil {
+		t.Fatalf("no job id in --bg output: %q", stdout)
+	}
+	return m[1]
+}
+
+// waitJobTerminal polls the job book until the job leaves running.
+func waitJobTerminal(t *testing.T, revuHome, id string) map[string]any {
+	t.Helper()
+	path := filepath.Join(revuHome, "jobs", id+".json")
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		raw, err := os.ReadFile(path)
+		if err == nil {
+			var j map[string]any
+			if json.Unmarshal(raw, &j) == nil && j["state"] != "running" {
+				return j
+			}
+		}
+		if time.Now().After(deadline) {
+			raw, _ := os.ReadFile(path)
+			t.Fatalf("job %s never finished: %s", id, raw)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// The acceptance criteria driven through the real binary: --bg registers a
+// job, a detached worker transitions it running→done, and the finished job
+// carries session_id + out_dir with review.yml patched.
+func TestE2EBackgroundJobRunsToDone(t *testing.T) {
+	bin := buildRevu(t)
+	workdir, env, revuHome := e2eEnv(t, true)
+
+	id := startBGJob(t, bin, workdir, env)
+	job := waitJobTerminal(t, revuHome, id)
+
+	if job["state"] != "done" {
+		t.Fatalf("job = %v, want done", job)
+	}
+	wantDir := filepath.Join(revuHome, "owner", "repo", "pr-42", "a1b2c3d")
+	if job["out_dir"] != wantDir || job["session_id"] != "sess-e2e" {
+		t.Errorf("job result = %v", job)
+	}
+
+	// session_id must land in review.yml exactly like a foreground run.
+	raw, err := os.ReadFile(filepath.Join(wantDir, "review.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "session_id: sess-e2e") {
+		t.Errorf("generated_by.session_id not written:\n%s", raw)
+	}
+
+	// The job book surfaces through the CLI, and the log holds the relay.
+	stdout, _, code := runRevu(t, bin, workdir, env, "jobs", "list")
+	if code != 0 || !strings.Contains(stdout, "done") || !strings.Contains(stdout, id) {
+		t.Errorf("jobs list = %q (code %d)", stdout, code)
+	}
+	stdout, _, code = runRevu(t, bin, workdir, env, "jobs", "log", id)
+	if code != 0 || !strings.Contains(stdout, "Generating review for owner/repo#42") {
+		t.Errorf("jobs log = %q (code %d)", stdout, code)
+	}
+}
+
+// A worker whose agent produces nothing must record the failure in the
+// job book (the dashboard's red badge feeds on this).
+func TestE2EBackgroundJobRecordsFailure(t *testing.T) {
+	bin := buildRevu(t)
+	workdir, env, revuHome := e2eEnv(t, false)
+
+	id := startBGJob(t, bin, workdir, env)
+	job := waitJobTerminal(t, revuHome, id)
+
+	if job["state"] != "failed" {
+		t.Fatalf("job = %v, want failed", job)
+	}
+	errText, _ := job["err"].(string)
+	if !strings.Contains(errText, "locate review dir") {
+		t.Errorf("failure cause not recorded: %q", errText)
+	}
+
+	stdout, _, code := runRevu(t, bin, workdir, env, "jobs", "list")
+	if code != 0 || !strings.Contains(stdout, "failed") {
+		t.Errorf("jobs list should show the failure: %q (code %d)", stdout, code)
 	}
 }

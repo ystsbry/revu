@@ -196,9 +196,25 @@ revu review 42 --codex --no-resume --json
 | 失敗時 | レビューが生成されなかった場合は非ゼロで終了する。**今回の実行で書かれていないレビュー dir は「不在」として扱う**ので、過去の実行結果を新しい成果物として掴むことはない |
 | `generated_by` | `tool` / `session_id` の review.yml への書き戻しは resume の有無に関わらず従来どおり行われる |
 
-**対象リポジトリは cwd の git remote から解決されます。** `revu pr prepare` も `gh` も `codex --cd` も cwd を対象にするため、CI は必ず checkout の中から `revu` を呼んでください（`--repo` のようなフラグは、実際にレビューされるリポジトリを変えられないので用意していません）。
+**対象リポジトリは cwd の git remote から解決されます。** `revu pr prepare` も `gh` も `codex --cd` も cwd を対象にするため、CI は必ず checkout の中から `revu` を呼んでください（フォアグラウンド実行に `--repo` が無いのはこのためです。例外は次節の `--bg` で、ワーカーが登録 clone の中で実行するため `--repo` を受け付けます）。
 
 既定の `revu review`（フラグなし）の挙動は従来から変わりません。
+
+## バックグラウンド実行（--bg とジョブ簿）
+
+`--bg` を付けると、レビュー生成を **detached なワーカープロセス**に切り離してすぐに戻ります。ジョブは `~/.revu/jobs/<job-id>.json`（ジョブ簿）に記録され、ログは同じ場所の `.log` に落ちます。
+
+```bash
+revu review 42 --bg                     # cwd の clone で BG 生成
+revu review 42 --bg --repo acme/api     # 登録リポジトリを cwd 外から BG 生成
+revu jobs list                          # running / done / failed の確認
+revu jobs log <job-id>                  # エージェントの進捗ログ
+```
+
+- 状態は `running → done | failed`。ワーカーがクラッシュした場合も、読み出し側が PID の生存確認で `failed` として検出します
+- 同一リポジトリ・同一 PR の running ジョブがあるときは二重起動を拒否します
+- 完了時は通常の生成と同じく `session_id` の記録・`generated_by` の書き戻しが行われ、`revu open` / `revu resume` がそのまま使えます
+- clone 消失などの失敗はジョブ簿の `err` に記録されます（ダッシュボードのバッジ表示は後続 PR で対応）
 
 ## テンプレートのカスタマイズ
 
@@ -261,6 +277,9 @@ $ revu guidelines list
 | `revu review [PR_NUMBER] --codex` | 同上だが `claude` の代わりに `codex` CLI で `$revu:pr` skill を起動（`scripts/install-codex.sh` でプラグインのインストールが必要） |
 | `revu review PR_NUMBER --no-resume` | レビューを生成した時点で終了し、対話 TUI に入らない（[非対話モード](#非対話モードci--自動化から呼ぶ)） |
 | `revu review PR_NUMBER --no-resume --json` | 同上で、結果を JSON で標準出力（進捗は標準エラーへ） |
+| `revu review PR_NUMBER --bg [--repo <slug>]` | レビュー生成を detached なバックグラウンドジョブとして起動し即終了（`--repo` で登録リポジトリを cwd 外から指定可） |
+| `revu jobs list` | バックグラウンドジョブの一覧（running / done / failed。ワーカー死亡も failed として検出） |
+| `revu jobs log <job-id>` | ジョブのログ（エージェントの進捗リレー）を表示 |
 | `revu validate [dir]` | review.yml と Markdown の整合性チェック |
 | `revu status [dir]` | accept/reject の集計、submit 状況を表示 |
 | `revu tui` | 複数リポジトリのレビューダッシュボードを起動（登録リポジトリ（プロファイル適用）→ GitHub の PR 一覧 → PR アクション → レビュー TUI と辿れる。cwd 非依存） |

@@ -14,6 +14,7 @@ import (
 
 	"github.com/ystsbry/revu/internal/claude"
 	"github.com/ystsbry/revu/internal/codex"
+	"github.com/ystsbry/revu/internal/jobs"
 )
 
 func TestResolveReviewEngine(t *testing.T) {
@@ -66,10 +67,13 @@ func TestReviewCmdFlagsRegistered(t *testing.T) {
 	if codexFlag.Annotations["cobra_annotation_mutually_exclusive"] == nil {
 		t.Errorf("--codex not marked mutually exclusive")
 	}
-	// revu review takes no --repo: the revu:pr skill runs in cwd, so a
-	// slug flag could only mislead about what gets reviewed.
-	if cmd.Flags().Lookup("repo") != nil {
-		t.Error("review cmd should not expose --repo while generation is cwd-bound")
+	// --repo exists but only pairs with --bg: a foreground review still
+	// runs the skill in cwd, so a bare slug flag would mislead about what
+	// gets reviewed. The pairing itself is asserted in cmd_review_bg_test.
+	for _, name := range []string{"bg", "repo"} {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Errorf("review cmd missing --%s flag", name)
+		}
 	}
 }
 
@@ -114,8 +118,14 @@ func stubDeps(t *testing.T, rec *resumeCall) reviewDeps {
 			rec.sessionID = sessionID
 			return nil
 		},
-		cwdSlug: func() (string, error) { return "owner/repo", nil },
-		now:     func() time.Time { return fixed },
+		cwdSlug:    func() (string, error) { return "owner/repo", nil },
+		now:        func() time.Time { return fixed },
+		cwdRoot:    func() (string, error) { return "/clones/repo", nil },
+		executable: func() (string, error) { return "/usr/bin/revu", nil },
+		spawnWorker: func(string, jobs.Job) (int, error) {
+			t.Error("spawnWorker called unexpectedly")
+			return 0, nil
+		},
 	}
 }
 
