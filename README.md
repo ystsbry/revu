@@ -214,7 +214,7 @@ revu jobs log <job-id>                  # エージェントの進捗ログ
 - 状態は `running → done | failed`。ワーカーがクラッシュした場合も、読み出し側が PID の生存確認で `failed` として検出します
 - 同一リポジトリ・同一 PR の running ジョブがあるときは二重起動を拒否します
 - 完了時は通常の生成と同じく `session_id` の記録・`generated_by` の書き戻しが行われ、`revu open` / `revu resume` がそのまま使えます
-- clone 消失などの失敗はジョブ簿の `err` に記録されます（ダッシュボードのバッジ表示は後続 PR で対応）
+- clone 消失などの失敗はジョブ簿の `err` に記録され、ダッシュボード（`revu tui`）の PR 一覧に `[running]` / `[failed]` バッジとして表示されます。PR アクション画面ではジョブの状態・失敗原因・ログ末尾を確認でき、running 中は自動更新されます
 
 ## テンプレートのカスタマイズ
 

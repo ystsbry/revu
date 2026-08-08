@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/ystsbry/revu/internal/jobs"
 	"github.com/ystsbry/revu/internal/model"
 )
 
@@ -51,11 +52,13 @@ func testReview(pr int) *model.Review {
 func newTestShell() (*Root, *RepoList, *PRList, *PRActions) {
 	l2 := NewPRActions("o/r", PRItem{Number: 5, ReviewedPath: "/dev/null/pr-5/abc1234"})
 	l2.load = func() (*model.Review, error) { return testReview(5), nil }
+	l2.loadJob = func() (*jobs.Job, []string) { return nil, nil }
 	l2.openReview = func(r *model.Review) (Screen, error) {
 		return Embed("Review #5", quitOnQ{}), nil
 	}
 
 	l1 := NewPRList("o/r", "")
+	l1.newWatch = func() *jobsWatcher { return nil }
 	l1.load = func(search string) ([]PRItem, error) {
 		return []PRItem{{Number: 5, ReviewedPath: "/dev/null/pr-5/abc1234", Submitted: true}}, nil
 	}
@@ -278,9 +281,8 @@ func TestPRListSearchSwitch(t *testing.T) {
 	}
 
 	// Initial load uses the per-repo condition.
-	if cmd := m.Init(); cmd != nil {
-		m.Update(cmd())
-	}
+	m.newWatch = func() *jobsWatcher { return nil }
+	m.Update(m.reload()())
 	if len(got) != 1 || got[0] != "label:x" {
 		t.Fatalf("initial searches = %v, want [label:x]", got)
 	}
@@ -351,10 +353,10 @@ func TestPRListDefaultSearch(t *testing.T) {
 func TestPRActionsWithoutLocalReview(t *testing.T) {
 	t.Parallel()
 	l2 := NewPRActions("o/r", PRItem{Number: 9, Title: "new feature", Author: "alice"})
+	l2.loadJob = func() (*jobs.Job, []string) { return nil, nil }
 
-	if cmd := l2.Init(); cmd != nil {
-		t.Fatal("no local review: Init should not load anything")
-	}
+	// Init loads only the job info now; with no job it changes nothing.
+	l2.Update(l2.reloadJob()())
 	out := l2.View()
 	for _, want := range []string{"local review: (none yet)", "@alice", "PR #9"} {
 		if !strings.Contains(out, want) {

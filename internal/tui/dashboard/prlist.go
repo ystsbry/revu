@@ -3,12 +3,14 @@ package dashboard
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/ystsbry/revu/internal/github"
+	"github.com/ystsbry/revu/internal/jobs"
 	"github.com/ystsbry/revu/internal/store"
 )
 
@@ -25,9 +27,9 @@ type PRItem struct {
 	ReviewedPath string
 	// Submitted is true when that local review records a submitted_at.
 	Submitted bool
-	// JobState is the running/done/failed marker for background review
-	// jobs. Always empty until WS-D wires the job store in; rendered
-	// verbatim when non-empty so WS-D only has to fill the field.
+	// JobState marks a background review job on this PR: "running" or
+	// "failed" (crash-aware, see jobs.Effective). Empty otherwise —
+	// including for done jobs, whose outcome already shows as [reviewed].
 	JobState string
 }
 
@@ -56,6 +58,13 @@ type PRList struct {
 	items   []PRItem
 	cursor  int
 
+	// watcher streams job-book changes so badges update while the screen
+	// is visible. Nil when fsnotify is unavailable ([r] still works).
+	// newWatch builds it on Init; tests inject a nil-returning stub so
+	// the suite never touches the real job book.
+	watcher  *jobsWatcher
+	newWatch func() *jobsWatcher
+
 	// load fetches the rows for a search condition; openPR builds the
 	// screen a selection pushes. Both are swapped out in tests.
 	load   func(search string) ([]PRItem, error)
@@ -74,6 +83,13 @@ func NewPRList(slug, search string) *PRList {
 	m := &PRList{slug: slug, search: search, searchInput: ti, loading: true}
 	m.load = func(s string) ([]PRItem, error) { return loadPRsFromGitHub(slug, s) }
 	m.openPR = func(it PRItem) Screen { return NewPRActions(slug, it) }
+	m.newWatch = func() *jobsWatcher {
+		w, err := newJobsWatcher()
+		if err != nil {
+			return nil
+		}
+		return w
+	}
 	return m
 }
 
@@ -110,14 +126,40 @@ func loadPRsFromGitHub(slug, search string) ([]PRItem, error) {
 				it.Submitted = submitted
 			}
 		}
+		it.JobState = jobBadgeState(slug, pr.Number, time.Now())
 		items = append(items, it)
 	}
 	return items, nil
 }
 
+// jobBadgeState is the badge for slug#pr's newest background job:
+// "running" and "failed" (crash-aware) surface; a done job stays silent
+// because its outcome is the review itself, already badged [reviewed].
+func jobBadgeState(slug string, pr int, now time.Time) string {
+	j, ok := jobs.LatestForPR(slug, pr)
+	if !ok {
+		return ""
+	}
+	st, _ := j.Effective(now)
+	if st == jobs.StateDone {
+		return ""
+	}
+	return string(st)
+}
+
 func (m *PRList) Title() string { return m.slug }
 
-func (m *PRList) Init() tea.Cmd { return m.reload() }
+func (m *PRList) Init() tea.Cmd {
+	// Watcher failures degrade to manual [r] reload — same contract as
+	// the review TUI's file watcher.
+	if m.watcher == nil && m.newWatch != nil {
+		m.watcher = m.newWatch()
+	}
+	return tea.Batch(m.reload(), m.watcher.wait())
+}
+
+// Close releases the job-book watcher when the screen is popped.
+func (m *PRList) Close() error { return m.watcher.Close() }
 
 func (m *PRList) reload() tea.Cmd {
 	m.loading = true
@@ -140,6 +182,11 @@ func (m *PRList) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.cursor >= len(m.items) {
 			m.cursor = max(0, len(m.items)-1)
 		}
+
+	case jobsChangedMsg:
+		// A job was created or finished: refresh the badges and re-arm
+		// the watcher for the next transition.
+		return m, tea.Batch(m.reload(), m.watcher.wait())
 
 	case tea.KeyMsg:
 		if m.searching {
@@ -244,7 +291,12 @@ func (m *PRList) listView() string {
 }
 
 // truncate shortens s to at most n runes (min 10), appending an ellipsis.
+// A non-positive n means the screen has no size yet; the text is returned
+// whole rather than guessed at.
 func truncate(s string, n int) string {
+	if n <= 0 {
+		return s
+	}
 	if n < 10 {
 		n = 10
 	}

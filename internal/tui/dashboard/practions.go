@@ -2,12 +2,16 @@ package dashboard
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/ystsbry/revu/internal/config"
+	"github.com/ystsbry/revu/internal/jobs"
 	"github.com/ystsbry/revu/internal/model"
 	"github.com/ystsbry/revu/internal/store"
 	"github.com/ystsbry/revu/internal/tui"
@@ -21,6 +25,19 @@ type prActionsLoadedMsg struct {
 
 // prActionsErrMsg surfaces a failed action (e.g. opening the review TUI).
 type prActionsErrMsg struct{ err error }
+
+// prActionsJobMsg carries the PR's newest background job and its log tail.
+type prActionsJobMsg struct {
+	job  *jobs.Job
+	tail []string
+}
+
+// jobTickMsg re-reads a running job so its state and log tail track the
+// worker live.
+type jobTickMsg struct{}
+
+// jobLogTailLines is how many log lines the L2 screen shows.
+const jobLogTailLines = 8
 
 // PRActions is the L2 screen: one PR, its local review state, and the
 // actions that can be taken on it. A PR without a local review shows what
@@ -39,21 +56,71 @@ type PRActions struct {
 	review    *model.Review
 	cursor    int
 
+	job     *jobs.Job
+	logTail []string
+
 	load       func() (*model.Review, error)
+	loadJob    func() (*jobs.Job, []string)
 	openReview func(*model.Review) (Screen, error)
 }
 
 func NewPRActions(slug string, item PRItem) *PRActions {
 	m := &PRActions{slug: slug, item: item}
 	m.openReview = func(r *model.Review) (Screen, error) { return embedReviewTUI(r) }
+	m.loadJob = func() (*jobs.Job, []string) { return loadJobInfo(slug, item.Number) }
 	if item.ReviewedPath == "" {
-		// Nothing local to load; the screen renders GitHub metadata only.
+		// Nothing local to load; the screen renders GitHub metadata and
+		// the job state only.
 		m.load = func() (*model.Review, error) { return nil, nil }
 		return m
 	}
 	m.loading = true
 	m.load = func() (*model.Review, error) { return store.Load(item.ReviewedPath) }
 	return m
+}
+
+// loadJobInfo fetches the newest background job for slug#pr along with the
+// tail of its log.
+func loadJobInfo(slug string, pr int) (*jobs.Job, []string) {
+	j, ok := jobs.LatestForPR(slug, pr)
+	if !ok {
+		return nil, nil
+	}
+	return &j, tailLines(j.LogPath, jobLogTailLines)
+}
+
+// tailLines returns the last n lines of the file at path, reading at most
+// the trailing 32KB so a chatty agent log stays cheap to poll.
+func tailLines(path string, n int) []string {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = f.Close() }()
+
+	const window = 32 * 1024
+	var offset int64
+	if st, err := f.Stat(); err == nil && st.Size() > window {
+		offset = st.Size() - window
+	}
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return nil
+	}
+	raw, err := io.ReadAll(f)
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if offset > 0 && len(lines) > 0 {
+		lines = lines[1:] // first line is likely cut mid-way by the window
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	if len(lines) == 1 && lines[0] == "" {
+		return nil
+	}
+	return lines
 }
 
 // embedReviewTUI builds the existing review TUI (L3) for r and wraps it as
@@ -114,14 +181,29 @@ func (m *PRActions) Title() string { return fmt.Sprintf("PR #%d", m.item.Number)
 func (m *PRActions) Init() tea.Cmd { return m.reload() }
 
 func (m *PRActions) reload() tea.Cmd {
-	if m.item.ReviewedPath == "" {
-		return nil
+	cmds := []tea.Cmd{m.reloadJob()}
+	if m.item.ReviewedPath != "" {
+		m.loading = true
+		load := m.load
+		cmds = append(cmds, func() tea.Msg {
+			r, err := load()
+			return prActionsLoadedMsg{review: r, err: err}
+		})
 	}
-	m.loading = true
+	return tea.Batch(cmds...)
+}
+
+func (m *PRActions) reloadJob() tea.Cmd {
+	load := m.loadJob
 	return func() tea.Msg {
-		r, err := m.load()
-		return prActionsLoadedMsg{review: r, err: err}
+		j, tail := load()
+		return prActionsJobMsg{job: j, tail: tail}
 	}
+}
+
+// jobTick schedules the next live refresh of a running job.
+func jobTick() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg { return jobTickMsg{} })
 }
 
 func (m *PRActions) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -136,6 +218,29 @@ func (m *PRActions) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case prActionsErrMsg:
 		m.actionErr = msg.err
+
+	case prActionsJobMsg:
+		m.job, m.logTail = msg.job, msg.tail
+		if m.job == nil {
+			break
+		}
+		switch st, _ := m.job.Effective(time.Now()); {
+		case st == jobs.StateRunning:
+			// Keep the state line and log tail live while the worker runs.
+			return m, jobTick()
+		case st == jobs.StateDone && m.review == nil && m.job.OutDir != "":
+			// The job finished while we watched: pull in the review it
+			// produced so [Open review] appears without re-entering L1.
+			m.loading = true
+			outDir := m.job.OutDir
+			return m, func() tea.Msg {
+				r, err := store.Load(outDir)
+				return prActionsLoadedMsg{review: r, err: err}
+			}
+		}
+
+	case jobTickMsg:
+		return m, m.reloadJob()
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -188,7 +293,7 @@ func (m *PRActions) View() string {
 	case m.err != nil:
 		body = faintBox(fmt.Sprintf("Failed to load review: %v\n\nPress [r] to retry.", m.err))
 	default:
-		body = lipgloss.JoinVertical(lipgloss.Left, m.metaView(), m.actionView())
+		body = lipgloss.JoinVertical(lipgloss.Left, m.metaView(), m.jobView(), m.actionView())
 	}
 
 	footer := lipgloss.NewStyle().Faint(true).Padding(0, 1).
@@ -217,15 +322,61 @@ func (m *PRActions) metaView() string {
 			lines = append(lines, "submitted:    (not yet)")
 		}
 		lines = append(lines, fmt.Sprintf("dir:          %s", m.item.ReviewedPath))
+	} else if m.jobRunning() {
+		lines = append(lines, "local review: (generating — background job running)")
 	} else {
 		lines = append(lines,
 			"local review: (none yet)",
 			"",
-			"Generate one with `revu review "+fmt.Sprint(m.item.Number)+"` inside the",
-			"clone (in-dashboard generation arrives with WS-E), then press [r].")
+			"Generate one with `revu review "+fmt.Sprint(m.item.Number)+" --bg` inside",
+			"the clone (in-dashboard generation arrives with WS-E), then press [r].")
 	}
 	return lipgloss.NewStyle().Faint(true).Padding(1, 1).
 		Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
+}
+
+// jobRunning reports whether the PR's newest job is effectively running.
+func (m *PRActions) jobRunning() bool {
+	if m.job == nil {
+		return false
+	}
+	st, _ := m.job.Effective(time.Now())
+	return st == jobs.StateRunning
+}
+
+// jobView renders the background-job section: state line, failure cause,
+// and the log tail.
+func (m *PRActions) jobView() string {
+	if m.job == nil {
+		return ""
+	}
+	st, reason := m.job.Effective(time.Now())
+	lines := []string{fmt.Sprintf("job:          %s  (%s)", st, m.job.ID)}
+	if st == jobs.StateFailed {
+		cause := m.job.Err
+		if cause == "" {
+			cause = reason
+		}
+		if cause != "" {
+			lines = append(lines, "job error:    "+truncate(firstLineOf(cause), m.width-20))
+		}
+	}
+	if len(m.logTail) > 0 {
+		lines = append(lines, "", "log tail:")
+		for _, l := range m.logTail {
+			lines = append(lines, "  "+truncate(l, m.width-6))
+		}
+	}
+	return lipgloss.NewStyle().Faint(true).Padding(0, 1).
+		Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
+}
+
+// firstLineOf keeps multi-line errors to their first line for the state row.
+func firstLineOf(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i] + " ..."
+	}
+	return s
 }
 
 func (m *PRActions) actionView() string {
