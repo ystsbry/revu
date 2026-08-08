@@ -35,6 +35,50 @@ type Config struct {
 	Editor EditorConfig `toml:"editor"`
 	UI     UIConfig     `toml:"ui"`
 	Review ReviewConfig `toml:"review"`
+	Repos  []RepoDef    `toml:"repo"`
+}
+
+// RepoDef is one entry in the [[repo]] TOML array: a registered repository
+// the dashboard and cwd-independent commands can resolve without being run
+// inside the clone.
+//
+// Example:
+//
+//	[[repo]]
+//	slug = "ystsbry/revu"
+//	path = "/home/me/ghq/github.com/ystsbry/revu"
+//
+// Registration normally lives in the global user layer
+// (os.UserConfigDir()/revu/config.toml), written by `revu repo scan/add`;
+// project layers may still add entries, which override the user layer per
+// slug.
+type RepoDef struct {
+	// Slug is the GitHub "owner/repo" identifier. Required, unique.
+	Slug string `toml:"slug"`
+
+	// Path is the local clone location. Relative paths are resolved
+	// against the config.toml that declared them; after Load() they are
+	// absolute. Required.
+	Path string `toml:"path"`
+
+	// Search optionally narrows the PR list for this repository (consumed
+	// by the dashboard's PR screens; free-form GitHub search terms).
+	Search string `toml:"search,omitempty"`
+}
+
+// validateRepoDef rejects entries that cannot be resolved later. Path
+// existence is deliberately not checked here: a registered clone may be
+// temporarily absent (different machine, not yet cloned) and `revu repo
+// list` surfaces that instead.
+func validateRepoDef(d RepoDef) error {
+	parts := strings.Split(d.Slug, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return fmt.Errorf("invalid repo slug %q (want \"owner/repo\")", d.Slug)
+	}
+	if d.Path == "" {
+		return fmt.Errorf("repo %q: path is required", d.Slug)
+	}
+	return nil
 }
 
 // EditorConfig overrides the $EDITOR environment variable when non-empty.
@@ -321,7 +365,47 @@ func merge(base, over Config, baseDir string) (Config, error) {
 			out.Review.Guidelines = append(out.Review.Guidelines, abs)
 		}
 	}
+	if len(over.Repos) > 0 {
+		// Clone before the upsert below: base and out share the slice's
+		// backing array, and merge must not mutate its input.
+		out.Repos = append([]RepoDef(nil), out.Repos...)
+	}
+	for _, r := range over.Repos {
+		if err := validateRepoDef(r); err != nil {
+			return Config{}, err
+		}
+		if !filepath.IsAbs(r.Path) {
+			r.Path = filepath.Join(baseDir, r.Path)
+		}
+		r.Path = filepath.Clean(r.Path)
+		// Slug-keyed upsert: a later layer (or a later duplicate in the
+		// same layer) overrides the earlier entry in place, so ordering
+		// stays stable and there is never more than one entry per slug.
+		if i := repoIndex(out.Repos, r.Slug); i >= 0 {
+			out.Repos[i] = r
+		} else {
+			out.Repos = append(out.Repos, r)
+		}
+	}
 	return out, nil
+}
+
+// repoIndex returns the index of slug in defs, or -1.
+func repoIndex(defs []RepoDef, slug string) int {
+	for i, d := range defs {
+		if d.Slug == slug {
+			return i
+		}
+	}
+	return -1
+}
+
+// FindRepo returns the registered entry for slug, if any.
+func (c Config) FindRepo(slug string) (RepoDef, bool) {
+	if i := repoIndex(c.Repos, slug); i >= 0 {
+		return c.Repos[i], true
+	}
+	return RepoDef{}, false
 }
 
 func containsString(s []string, v string) bool {
@@ -356,6 +440,17 @@ func BuildSeverityRegistry(defs []SeverityDef) (*model.SeverityRegistry, error) 
 
 // SampleTOML returns a starter config the user can drop at Path().
 const SampleTOML = `# revu configuration. All keys are optional; remove what you don't need.
+
+# Registered repositories: the dashboard and cwd-independent commands
+# resolve "owner/repo" slugs to local clones through these entries.
+# Normally maintained by 'revu repo scan <root>' / 'revu repo add <path>'
+# rather than by hand; [[repo]] blocks are machine-managed (revu rewrites
+# the matching block on update/remove, keeping everything else intact).
+#
+# [[repo]]
+# slug = "ystsbry/revu"
+# path = "/home/me/ghq/github.com/ystsbry/revu"
+# # search = "label:needs-review"   # optional PR-list filter (dashboard)
 
 [editor]
 # Editor command used by the 'e' key in the TUI. Whitespace separates

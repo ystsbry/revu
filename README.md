@@ -262,17 +262,34 @@ $ revu guidelines list
 | `revu review PR_NUMBER --no-resume --json` | 同上で、結果を JSON で標準出力（進捗は標準エラーへ） |
 | `revu validate [dir]` | review.yml と Markdown の整合性チェック |
 | `revu status [dir]` | accept/reject の集計、submit 状況を表示 |
-| `revu open [dir]` | TUI を起動（cwd の git remote が review.PR.Repo と一致する必要あり） |
+| `revu open [dir]` | TUI を起動（clone は cwd 一致 → 登録リポジトリの順で解決） |
 | `revu open --repo-root <path> <dir>` | repo 検証をスキップして任意のローカル clone を指定 |
 | `revu export [dir] --format json` | 投稿ペイロードを JSON で標準出力（API は呼ばない） |
 | `revu submit [dir]` | 投稿フローを起動（`submit` タイプで明示確認） |
 | `revu submit --dry-run [dir]` | 投稿内容のプレビュー（API は呼ばない） |
 | `revu submit --no-approve [dir]` | `review_event: APPROVE` のレビューを COMMENT に降格して投稿（CI 向け。COMMENT / REQUEST_CHANGES は変わらない） |
+| `revu repo scan <root>` | ディレクトリ走査で clone を検出し、user config の `[[repo]]` へ一括登録（`--dry-run` あり） |
+| `revu repo add <path>` | clone を 1 つ登録（既存 slug はパス更新） |
+| `revu repo list` | 登録リポジトリの一覧（パス消失は `(missing)` 表示） |
+| `revu repo remove <slug>` | 登録を削除 |
 | `revu config` | 現在の設定を表示 |
 | `revu config --init` | スターター `config.toml` を書き出す |
 | `revu severities` | 有効な severity 一覧を表示（`--json` で機械可読出力、skill が利用） |
 
-`[dir]` を省略すると、cwd の git remote から `~/.revu/{owner}/{repo}/` 配下の最新 `pr-N` を解決します。
+`[dir]` を省略すると、cwd の git remote から `~/.revu/{owner}/{repo}/` 配下の最新 `pr-N` を解決します。`validate` / `status` / `export` / `open` / `resume` は `--repo <owner>/<repo>` でも解決でき、この場合 cwd がどこであっても（git リポジトリの外でも）動作します。
+
+## リポジトリ登録（cwd 非依存の解決）
+
+`revu repo scan / add` で「slug ↔ ローカル clone パス」を登録しておくと、cwd に依存しない解決ができるようになります。ghq を使っているなら root を一度走査すれば十分です:
+
+```bash
+revu repo scan ~/ghq            # 検出結果を登録（--dry-run で確認だけも可）
+revu repo list
+```
+
+- 登録先はグローバル user config（`os.UserConfigDir()/revu/config.toml`）の `[[repo]]` ブロック
+- revu の機械編集は **`[[repo]]` ブロックだけ**を追記・置換・削除し、それ以外のコメント・設定はそのまま保持する
+- 登録済みの clone は `revu open` の clone 解決（cwd 不一致時のフォールバック）と、今後のダッシュボード機能で利用される
 
 ## TUI のキーバインド
 

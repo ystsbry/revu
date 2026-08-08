@@ -9,30 +9,32 @@ import (
 )
 
 func newValidateCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "validate [dir]",
 		Short: "Validate a review directory's YAML/Markdown integrity",
 		Args:  cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			arg := ""
-			if len(args) == 1 {
-				arg = args[0]
-			}
-			dir, err := store.ResolveReviewDir(arg)
-			if err != nil {
-				return err
-			}
-			r, err := store.Load(dir)
-			if err != nil {
-				return err
-			}
-			counts := r.Counts()
-			fmt.Fprintf(cmd.OutOrStdout(),
-				"OK %s (PR #%d, %d comments: pending=%d accepted=%d rejected=%d edited=%d)\n",
-				dir, r.PR.Number, len(r.Comments),
-				counts["pending"], counts["accepted"], counts["rejected"], counts["edited"],
-			)
-			return nil
-		},
 	}
+	repoSlug := addRepoFlag(cmd)
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		arg := ""
+		if len(args) == 1 {
+			arg = args[0]
+		}
+		dir, err := resolveReviewDirArg(arg, *repoSlug)
+		if err != nil {
+			return err
+		}
+		r, err := store.Load(dir)
+		if err != nil {
+			return err
+		}
+		counts := r.Counts()
+		fmt.Fprintf(cmd.OutOrStdout(),
+			"OK %s (PR #%d, %d comments: pending=%d accepted=%d rejected=%d edited=%d)\n",
+			dir, r.PR.Number, len(r.Comments),
+			counts["pending"], counts["accepted"], counts["rejected"], counts["edited"],
+		)
+		return nil
+	}
+	return cmd
 }
