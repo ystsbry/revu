@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	zone "github.com/lrstanley/bubblezone"
 
 	"github.com/ystsbry/revu/internal/github"
 )
@@ -28,7 +29,7 @@ func Pick(items []github.PRListItem) (*github.PRListItem, error) {
 		return nil, fmt.Errorf("no PRs to pick from")
 	}
 	m := newModel(items)
-	final, err := tea.NewProgram(m).Run()
+	final, err := tea.NewProgram(m, tea.WithMouseCellMotion()).Run()
 	if err != nil {
 		return nil, err
 	}
@@ -45,10 +46,11 @@ type model struct {
 	cursor int
 	chose  bool
 	width  int
+	zones  *zone.Manager
 }
 
 func newModel(items []github.PRListItem) model {
-	return model{items: items}
+	return model{items: items, zones: zone.New()}
 }
 
 func (m model) Init() tea.Cmd { return nil }
@@ -57,6 +59,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+	case tea.MouseMsg:
+		return m.updateMouse(msg)
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q", "esc":
@@ -81,6 +85,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// updateMouse: wheel moves the cursor; clicking a row selects it, and a
+// click on the already-selected row confirms — same contract as the
+// review TUI's list.
+func (m model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case msg.Button == tea.MouseButtonWheelUp:
+		if m.cursor > 0 {
+			m.cursor--
+		}
+		return m, nil
+	case msg.Button == tea.MouseButtonWheelDown:
+		if m.cursor < len(m.items)-1 {
+			m.cursor++
+		}
+		return m, nil
+	case msg.Button != tea.MouseButtonLeft || msg.Action != tea.MouseActionPress:
+		return m, nil
+	}
+	for i := range m.items {
+		info := m.zones.Get(fmt.Sprintf("pick:%d", i))
+		if info == nil || info.IsZero() || !info.InBounds(msg) {
+			continue
+		}
+		if m.cursor == i {
+			m.chose = true
+			return m, tea.Quit
+		}
+		m.cursor = i
+		return m, nil
+	}
+	return m, nil
+}
+
 func (m model) View() string {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render(fmt.Sprintf("Select a PR to review (%d awaiting)", len(m.items))))
@@ -93,13 +130,13 @@ func (m model) View() string {
 			cursor = cursorStyle.Render("▸ ")
 			title = selectedStyle.Render(title)
 		}
-		fmt.Fprintf(&b, "%s#%-5d %s\n", cursor, it.Number, title)
-		meta := fmt.Sprintf("       %s → %s  by @%s", it.HeadRefName, it.BaseRefName, it.Author.Login)
-		b.WriteString(dimStyle.Render(meta))
+		row := fmt.Sprintf("%s#%-5d %s\n%s", cursor, it.Number, title,
+			dimStyle.Render(fmt.Sprintf("       %s → %s  by @%s", it.HeadRefName, it.BaseRefName, it.Author.Login)))
+		b.WriteString(m.zones.Mark(fmt.Sprintf("pick:%d", i), row))
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("↑/↓ or j/k: move   enter: select   q/esc: cancel"))
+	b.WriteString(helpStyle.Render("click/↑/↓: move   click again/enter: select   q/esc: cancel"))
 	b.WriteString("\n")
-	return b.String()
+	return m.zones.Scan(b.String())
 }

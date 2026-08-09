@@ -13,12 +13,21 @@ func helpView(width, height int) string {
 		Bold(true).
 		Foreground(lipgloss.Color("214")).
 		Padding(0, 1).
-		Render("revu — keybindings")
+		Render("revu — mouse & keybindings")
 
 	sections := []struct {
 		heading string
 		rows    [][2]string
 	}{
+		{
+			"Mouse",
+			[][2]string{
+				{"click", "select row / press button / switch tab"},
+				{"click again", "open the selected row"},
+				{"wheel", "scroll list, markdown panes, summary"},
+				{"click event", "set review_event (summary)"},
+			},
+		},
 		{
 			"Navigation",
 			[][2]string{
