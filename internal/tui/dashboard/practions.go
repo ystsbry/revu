@@ -93,8 +93,14 @@ func NewPRActions(slug string, item PRItem) *PRActions {
 	m.openReview = func(r *model.Review) (Screen, error) { return embedReviewTUI(r) }
 	m.loadJob = func() (*jobs.Job, []string) { return loadJobInfo(slug, item.Number) }
 	m.startJob = func(workDir string) (jobs.Job, error) {
+		// The config default model applies here; per-action model
+		// selection stays out of scope until the UI needs it.
+		model := ""
+		if cfg, _, err := config.Load(); err == nil {
+			model = cfg.Review.ClaudeModel
+		}
 		return jobs.StartReview(jobs.StartReviewOptions{
-			Slug: slug, PR: item.Number, Engine: "claude", WorkDir: workDir,
+			Slug: slug, PR: item.Number, Engine: "claude", Model: model, WorkDir: workDir,
 		})
 	}
 	m.runExec = runExternal

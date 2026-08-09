@@ -38,8 +38,12 @@ func newJobsListCmd() *cobra.Command {
 			now := time.Now()
 			for _, j := range all {
 				state, errText := j.Effective(now)
+				engine := j.Engine
+				if j.Model != "" {
+					engine += "(" + j.Model + ")"
+				}
 				line := fmt.Sprintf("%-8s %s  %s#%d  %s  %s",
-					state, j.ID, j.Slug, j.PR, j.Engine, j.StartedAt.Format("2006-01-02 15:04"))
+					state, j.ID, j.Slug, j.PR, engine, j.StartedAt.Format("2006-01-02 15:04"))
 				if state == jobs.StateFailed && errText != "" {
 					line += "  err: " + firstLine(errText)
 				}

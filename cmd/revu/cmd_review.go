@@ -15,6 +15,7 @@ import (
 
 	"github.com/ystsbry/revu/internal/claude"
 	"github.com/ystsbry/revu/internal/codex"
+	"github.com/ystsbry/revu/internal/config"
 	"github.com/ystsbry/revu/internal/github"
 	"github.com/ystsbry/revu/internal/jobs"
 	"github.com/ystsbry/revu/internal/store"
@@ -82,6 +83,7 @@ func newReviewCmdWith(deps reviewDeps) *cobra.Command {
 		asJSON    bool
 		bg        bool
 		repoSlug  string
+		modelFlag string
 	)
 	cmd := &cobra.Command{
 		Use:   "review [PR_NUMBER]",
@@ -167,6 +169,8 @@ skill runs in cwd, so CI must invoke revu from inside the checkout.`,
 				return err
 			}
 
+			model := resolveReviewModel(engine, modelFlag)
+
 			if bg {
 				return deps.startBackgroundReview(cmd, reviewOptions{
 					Engine:   engine,
@@ -174,6 +178,7 @@ skill runs in cwd, so CI must invoke revu from inside the checkout.`,
 					PRNumber: prNumber,
 					Focus:    focus,
 					RepoSlug: repoSlug,
+					Model:    model,
 				})
 			}
 
@@ -184,6 +189,7 @@ skill runs in cwd, so CI must invoke revu from inside the checkout.`,
 				Focus:    focus,
 				NoResume: noResume,
 				AsJSON:   asJSON,
+				Model:    model,
 			})
 		},
 	}
@@ -194,6 +200,7 @@ skill runs in cwd, so CI must invoke revu from inside the checkout.`,
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the result as JSON on stdout, with progress on stderr (requires --no-resume)")
 	cmd.Flags().BoolVar(&bg, "bg", false, "run the review as a detached background job and exit immediately (requires PR_NUMBER; see `revu jobs`)")
 	cmd.Flags().StringVar(&repoSlug, "repo", "", `with --bg: review a registered "owner/repo" instead of cwd (clone resolved from the [[repo]] registry)`)
+	cmd.Flags().StringVar(&modelFlag, "model", "", "model for this run (claude: --model, codex: -c model=...); default from config [review] claude_model/codex_model, else the agent CLI's own default")
 	cmd.MarkFlagsMutuallyExclusive("claude", "codex")
 	return cmd
 }
@@ -246,6 +253,26 @@ type reviewOptions struct {
 	AsJSON   bool
 	// RepoSlug is the --repo flag value; non-empty only with --bg.
 	RepoSlug string
+	// Model is the resolved per-run model ("" = agent CLI default).
+	Model string
+}
+
+// resolveReviewModel picks the model for one run: the --model flag wins,
+// then the engine's config default, then "" (the agent CLI's own default).
+// Config load failures resolve to "" — the review itself will surface a
+// broken config where it matters.
+func resolveReviewModel(engine reviewEngine, flag string) string {
+	if flag != "" {
+		return flag
+	}
+	cfg, _, err := config.Load()
+	if err != nil {
+		return ""
+	}
+	if engine == engineCodex {
+		return cfg.Review.CodexModel
+	}
+	return cfg.Review.ClaudeModel
 }
 
 func (deps reviewDeps) runReview(ctx context.Context, cmd *cobra.Command, opts reviewOptions) error {
@@ -262,6 +289,7 @@ func (deps reviewDeps) runReview(ctx context.Context, cmd *cobra.Command, opts r
 		Slug:     opts.Slug,
 		PRNumber: opts.PRNumber,
 		Focus:    opts.Focus,
+		Model:    opts.Model,
 		Progress: progress,
 		Warn:     cmd.ErrOrStderr(),
 	}
@@ -335,6 +363,8 @@ type reviewGenOptions struct {
 	NotBefore time.Time
 	// WorkDir is the clone the agent runs in. Empty means cwd.
 	WorkDir string
+	// Model is the per-run model override ("" = agent CLI default).
+	Model string
 }
 
 // reviewGenResult describes one generated review. It doubles as the --json
@@ -368,6 +398,7 @@ func (deps reviewDeps) generateReviewClaude(ctx context.Context, opts reviewGenO
 		Focus:     opts.Focus,
 		OwnerRepo: opts.Slug,
 		WorkDir:   opts.WorkDir,
+		Model:     opts.Model,
 		Progress:  opts.Progress,
 		Stdin:     opts.Stdin,
 		NotBefore: opts.NotBefore,
@@ -402,6 +433,7 @@ func (deps reviewDeps) generateReviewCodex(ctx context.Context, opts reviewGenOp
 		Focus:     opts.Focus,
 		OwnerRepo: opts.Slug,
 		WorkDir:   opts.WorkDir,
+		Model:     opts.Model,
 		Progress:  opts.Progress,
 		Stdin:     opts.Stdin,
 		NotBefore: opts.NotBefore,

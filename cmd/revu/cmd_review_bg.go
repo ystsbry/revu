@@ -29,6 +29,7 @@ func (deps reviewDeps) startBackgroundReview(cmd *cobra.Command, opts reviewOpti
 		PR:      opts.PRNumber,
 		Engine:  string(opts.Engine),
 		Focus:   opts.Focus,
+		Model:   opts.Model,
 		WorkDir: workDir,
 		RevuBin: bin,
 		Now:     deps.now,

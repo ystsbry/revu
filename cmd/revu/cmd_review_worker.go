@@ -71,6 +71,7 @@ func (deps reviewDeps) runReviewWorker(cmd *cobra.Command, jobID string) error {
 		Slug:     job.Slug,
 		PRNumber: job.PR,
 		Focus:    job.Focus,
+		Model:    job.Model,
 		WorkDir:  job.WorkDir,
 		// stdout is the job log; nothing may block on input in a
 		// detached process; and a run that wrote nothing must fail

@@ -43,6 +43,9 @@ type Job struct {
 	Engine string `json:"engine"` // "claude" | "codex"
 	Mode   string `json:"mode"`   // "bg" today; "fg" reserved for WS-E
 	Focus  string `json:"focus,omitempty"`
+	// Model is the per-run model override handed to the engine. Empty
+	// means the agent CLI's own default.
+	Model string `json:"model,omitempty"`
 
 	State State `json:"state"`
 	PID   int   `json:"pid,omitempty"`

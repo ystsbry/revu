@@ -43,6 +43,10 @@ type ReviewArgs struct {
 	// what interactive `revu review` wants.
 	WorkDir string
 
+	// Model overrides the model for this invocation (`claude --model`).
+	// Empty leaves the claude CLI's own default untouched.
+	Model string
+
 	// Bin overrides the resolved claude binary path. Empty falls back to
 	// "claude" on PATH.
 	Bin string
@@ -112,28 +116,7 @@ func RunReviewPR(ctx context.Context, args ReviewArgs) (ReviewResult, error) {
 		return ReviewResult{}, fmt.Errorf("create %s: %w", revuRoot, err)
 	}
 
-	// Argument order matters: `--add-dir <directories...>` is variadic and
-	// will swallow the prompt if placed right before it. Put it before
-	// `--print` so the next `-` flag terminates the variadic capture and
-	// the prompt remains a clean trailing positional.
-	//
-	// `--permission-mode acceptEdits` is required: in non-interactive
-	// `--print` mode, write/edit operations cannot prompt the user, so
-	// they are blocked by default. acceptEdits auto-approves them so the
-	// skill can write its review files to ~/.revu/.
-	//
-	// `--output-format stream-json --verbose` makes claude emit one JSON
-	// event per line as it runs (tool calls, assistant messages, the
-	// final result). We pipe that through relayProgress so the user sees
-	// what the skill is doing in real time instead of staring at a blank
-	// terminal until the review is fully written.
-	cmd := exec.CommandContext(ctx, bin,
-		"--add-dir", revuRoot,
-		"--permission-mode", "acceptEdits",
-		"--output-format", "stream-json",
-		"--verbose",
-		"--print", prompt,
-	)
+	cmd := exec.CommandContext(ctx, bin, buildPrintArgs(prompt, revuRoot, args.Model)...)
 	// Empty WorkDir keeps exec's default (the caller's cwd), so the
 	// interactive path is byte-for-byte what it always was.
 	cmd.Dir = args.WorkDir
@@ -167,6 +150,39 @@ func RunReviewPR(ctx context.Context, args ReviewArgs) (ReviewResult, error) {
 		return ReviewResult{}, fmt.Errorf("locate review dir after claude run (claude may have failed silently): %w", err)
 	}
 	return ReviewResult{OutDir: out, SessionID: sessionID}, nil
+}
+
+// buildPrintArgs constructs the argv (after the binary) for one
+// `claude --print` run. Extracted so the flag set is unit-testable.
+//
+// Why each flag:
+//
+//   - Argument order matters: `--add-dir <directories...>` is variadic and
+//     will swallow the prompt if placed right before it. Put it before
+//     `--print` so the next `-` flag terminates the variadic capture and
+//     the prompt remains a clean trailing positional.
+//   - `--permission-mode acceptEdits` is required: in non-interactive
+//     `--print` mode, write/edit operations cannot prompt the user, so
+//     they are blocked by default. acceptEdits auto-approves them so the
+//     skill can write its review files to ~/.revu/.
+//   - `--output-format stream-json --verbose` makes claude emit one JSON
+//     event per line as it runs (tool calls, assistant messages, the
+//     final result). We pipe that through relayProgress so the user sees
+//     what the skill is doing in real time instead of staring at a blank
+//     terminal until the review is fully written.
+//   - `--model` is added only when the caller picked one, so the claude
+//     CLI's own default keeps applying otherwise.
+func buildPrintArgs(prompt, revuRoot, model string) []string {
+	out := []string{"--add-dir", revuRoot}
+	if model != "" {
+		out = append(out, "--model", model)
+	}
+	return append(out,
+		"--permission-mode", "acceptEdits",
+		"--output-format", "stream-json",
+		"--verbose",
+		"--print", prompt,
+	)
 }
 
 // resolveProgress returns w, or os.Stdout when the caller left it unset.

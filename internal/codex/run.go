@@ -36,6 +36,10 @@ type ReviewArgs struct {
 	// current directory, matching the historical behaviour.
 	WorkDir string
 
+	// Model overrides the model for this invocation (`-c model="..."`).
+	// Empty leaves ~/.codex/config.toml's model in charge.
+	Model string
+
 	// Bin overrides the resolved codex binary. Empty falls back to "codex".
 	Bin string
 
@@ -114,7 +118,7 @@ func RunReviewPR(ctx context.Context, args ReviewArgs) (ReviewResult, error) {
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, bin, buildExecArgs(prompt, cwd, revuRoot)...)
+	cmd := exec.CommandContext(ctx, bin, buildExecArgs(prompt, cwd, revuRoot, args.Model)...)
 	// The child's stderr and the relay's own diagnostics stay on
 	// os.Stderr on purpose: only stdout is a machine-readable channel for
 	// non-interactive callers, and they want codex's own errors visible.
@@ -169,8 +173,10 @@ func resolveStdin(r io.Reader) io.Reader {
 //     `--add-dir ~/.revu` extends the writable set to the revu output
 //     dir, which lives outside the repo. `codex exec` is already
 //     non-interactive, so there's no approval flag to pass.
+//
 //   - `--json` makes codex emit one event per line on stdout (see
 //     stream.go for the event shapes we recognise).
+//
 //   - `-c sandbox_workspace_write.network_access=true` opens outbound
 //     network egress just for this exec run. The skill calls
 //     `revu pr prepare` / `revu pr diff`, which shell out to `gh` and
@@ -179,6 +185,7 @@ func resolveStdin(r io.Reader) io.Reader {
 //     overrides config.toml, so the user's global
 //     `network_access = false` stays in place for every other codex
 //     invocation.
+//
 //   - `-c model_reasoning_effort="high"` is a per-invocation bump from
 //     codex's default `medium`. Without it, codex exec under-shoots the
 //     skill's "5〜10件を目安" guideline and announces it will limit the
@@ -187,19 +194,28 @@ func resolveStdin(r io.Reader) io.Reader {
 //     issues. The override only applies to this exec run; the user's
 //     global default for other codex invocations is unchanged.
 //
+//   - `-c model="..."` is added only when the caller picked a model, so
+//     the user's configured default keeps applying otherwise. Like every
+//     other `-c` here it lasts for this exec run only.
+//
 // All of these are options of the `exec` subcommand (not the top-level
 // `codex`), so they go after `exec` in the argv.
-func buildExecArgs(prompt, cwd, revuRoot string) []string {
-	return []string{
+func buildExecArgs(prompt, cwd, revuRoot, model string) []string {
+	out := []string{
 		"exec",
 		"-c", "sandbox_workspace_write.network_access=true",
 		"-c", `model_reasoning_effort="high"`,
+	}
+	if model != "" {
+		out = append(out, "-c", fmt.Sprintf("model=%q", model))
+	}
+	return append(out,
 		"--cd", cwd,
 		"--sandbox", "workspace-write",
 		"--add-dir", revuRoot,
 		"--json",
 		prompt,
-	}
+	)
 }
 
 // ResumeArgs mirrors claude.ResumeArgs.

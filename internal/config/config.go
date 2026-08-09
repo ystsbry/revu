@@ -199,6 +199,14 @@ type ReviewConfig struct {
 	// replaced (no per-name merging).
 	Severities []SeverityDef `toml:"severity"`
 
+	// ClaudeModel / CodexModel set the default model per engine for
+	// review generation (`revu review`, background jobs, the dashboard's
+	// run actions). The `--model` flag overrides them per invocation;
+	// empty leaves each agent CLI's own default in charge. Split per
+	// engine because the two vendors' model names do not overlap.
+	ClaudeModel string `toml:"claude_model"`
+	CodexModel  string `toml:"codex_model"`
+
 	// Guidelines is the list of paths to additional review-guidance files
 	// (markdown, plain text) that the revu:pr skill loads alongside its
 	// built-in viewpoints. Paths in the TOML may be relative to the
@@ -429,6 +437,12 @@ func merge(base, over Config, baseDir string) (Config, error) {
 			return Config{}, fmt.Errorf("invalid review.default_event %q", over.Review.DefaultEvent)
 		}
 		out.Review.DefaultEvent = over.Review.DefaultEvent
+	}
+	if over.Review.ClaudeModel != "" {
+		out.Review.ClaudeModel = over.Review.ClaudeModel
+	}
+	if over.Review.CodexModel != "" {
+		out.Review.CodexModel = over.Review.CodexModel
 	}
 	if len(over.Review.Severities) > 0 {
 		// Validate by constructing a registry; replace the whole list.
