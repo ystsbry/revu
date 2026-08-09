@@ -100,7 +100,7 @@ Claude Code に `/revu:pr <PR_NUMBER>` と入力すると skill が起動し、`
 /revu:edit c3 を reject して
 /revu:read 123
 /revu:delete 123
-/revu:report --all
+/revu:report --profile ksm
 /revu:create-profile
 ```
 

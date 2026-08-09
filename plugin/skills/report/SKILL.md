@@ -10,19 +10,33 @@ description: 生成済みの revu レビュー結果を横断的に読み、似�
 ## 入力
 
 ```
-/revu:report [<owner>/<repo> ...] [--all]
+/revu:report [<owner>/<repo> ...] [--profile <name>] [--all]
 ```
 
 - 引数なし: cwd のリポジトリのレビューを対象
 - `<owner>/<repo> ...`: 指定リポジトリ（複数可）を横断
-- `--all`: 登録済みリポジトリ全件（active プロファイルがあればその範囲）を横断
+- `--profile <name>`: 指定プロファイルに属するリポジトリ群を横断（active でないプロファイルも指定可）
+- `--all`: プロファイルに関係なく、登録済みリポジトリ**全件**を横断
 
 ## 手順
 
 ### 1. 対象リポジトリの決定
 
-- 引数なしの場合: `revu validate` を実行し、`OK` 行のパスから `~/.revu/{owner}/{repo}` を base として得る（cwd 非依存で指定したい場合は slug 指定を促す）
-- slug 指定 / `--all` の場合: `revu repo list`（`--all` 指定時は active プロファイルのまま）で対象 slug を確定し、base は `~/.revu/<owner>/<repo>`。ローカルレビューが無いリポジトリはスキップして母数の注記に含める
+- 引数なしの場合: `revu validate` を実行し、`OK` 行のパスから `~/.revu/{owner}/{repo}` を base として得る（cwd 非依存で指定したい場合は slug / `--profile` 指定を促す）
+- `--profile <name>` の場合: 対象 slug 群を取得する:
+
+```bash
+revu repo list --profile <name>
+```
+
+  未宣言のプロファイル名はこのコマンドがエラーにするので、`revu profile list` の一覧を添えて聞き直す
+- `--all` の場合: active プロファイルを無視して登録全件を取得する:
+
+```bash
+revu repo list --all
+```
+
+- slug 直接指定の場合はそのまま使う。いずれの場合も base は `~/.revu/<owner>/<repo>`。ローカルレビューが無いリポジトリはスキップして母数の注記に含め、レポートの「対象:」にはどの指定（cwd / profile 名 / all / slug 列挙）だったかを明記する
 
 ### 2. レビューの列挙と読み込み
 
