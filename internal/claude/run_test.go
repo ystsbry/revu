@@ -236,3 +236,21 @@ func TestRunReviewPRWithoutNotBeforeAcceptsExistingDir(t *testing.T) {
 		t.Errorf("OutDir = %q, want %q", res.OutDir, dir)
 	}
 }
+
+// The --model flag appears only when a model was picked, right before the
+// flags whose order the printing pipeline depends on.
+func TestBuildPrintArgsModelOverride(t *testing.T) {
+	args := buildPrintArgs("/revu:pr 42", "/home/u/.revu", "claude-sonnet-5")
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--model claude-sonnet-5") {
+		t.Fatalf("model flag missing: %v", args)
+	}
+	if args[len(args)-1] != "/revu:pr 42" {
+		t.Fatalf("prompt must stay the trailing positional: %v", args)
+	}
+
+	joined = strings.Join(buildPrintArgs("/revu:pr 42", "/home/u/.revu", ""), " ")
+	if strings.Contains(joined, "--model") {
+		t.Fatalf("no model picked: --model must be absent: %v", joined)
+	}
+}

@@ -263,3 +263,94 @@ func TestWorkerFailsWhenCloneIsGone(t *testing.T) {
 		t.Errorf("job = %+v, want failed with re-register hint", got)
 	}
 }
+
+// --model rides through the whole pipeline: flag > config default > "",
+// recorded in the job book and handed to the engine by the worker.
+func TestReviewModelResolution(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(cfgPath, []byte("[review]\nclaude_model = \"claude-sonnet-5\"\ncodex_model = \"gpt-5.3-codex\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("REVU_CONFIG", cfgPath)
+
+	if got := resolveReviewModel(engineClaude, "explicit-model"); got != "explicit-model" {
+		t.Errorf("flag should win, got %q", got)
+	}
+	if got := resolveReviewModel(engineClaude, ""); got != "claude-sonnet-5" {
+		t.Errorf("claude config default = %q", got)
+	}
+	if got := resolveReviewModel(engineCodex, ""); got != "gpt-5.3-codex" {
+		t.Errorf("codex config default = %q", got)
+	}
+
+	t.Setenv("REVU_CONFIG", filepath.Join(t.TempDir(), "none.toml"))
+	if got := resolveReviewModel(engineClaude, ""); got != "" {
+		t.Errorf("no config: model should stay empty, got %q", got)
+	}
+}
+
+func TestReviewModelFlagReachesEngine(t *testing.T) {
+	t.Setenv("REVU_HOME", t.TempDir())
+	t.Setenv("REVU_CONFIG", filepath.Join(t.TempDir(), "none.toml"))
+	var rec resumeCall
+	var gotModel string
+	deps := stubDeps(t, &rec)
+	deps.runClaude = func(_ context.Context, args claude.ReviewArgs) (claude.ReviewResult, error) {
+		gotModel = args.Model
+		return claude.ReviewResult{OutDir: reviewFixture(t), SessionID: "s"}, nil
+	}
+
+	_, _, err := runReviewCmd(t, deps, "7", "--no-resume", "--model", "claude-sonnet-5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotModel != "claude-sonnet-5" {
+		t.Errorf("engine model = %q, want claude-sonnet-5", gotModel)
+	}
+}
+
+func TestReviewBGRecordsModelInJob(t *testing.T) {
+	t.Setenv("REVU_HOME", t.TempDir())
+	t.Setenv("REVU_CONFIG", filepath.Join(t.TempDir(), "none.toml"))
+	var rec resumeCall
+	var spawned jobs.Job
+	deps := bgDeps(t, &rec, &spawned)
+
+	if _, _, err := runReviewCmd(t, deps, "7", "--bg", "--model", "claude-sonnet-5"); err != nil {
+		t.Fatal(err)
+	}
+	if spawned.Model != "claude-sonnet-5" {
+		t.Fatalf("job model = %q, want claude-sonnet-5", spawned.Model)
+	}
+	j, err := jobs.Load(spawned.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j.Model != "claude-sonnet-5" {
+		t.Errorf("job book model = %q", j.Model)
+	}
+}
+
+func TestWorkerPassesJobModelToEngine(t *testing.T) {
+	t.Setenv("REVU_HOME", t.TempDir())
+	outDir := reviewFixture(t)
+	var rec resumeCall
+	var gotModel string
+	deps := stubDeps(t, &rec)
+	deps.runClaude = func(_ context.Context, args claude.ReviewArgs) (claude.ReviewResult, error) {
+		gotModel = args.Model
+		return claude.ReviewResult{OutDir: outDir}, nil
+	}
+
+	job := seedJob(t, t.TempDir())
+	job.Model = "claude-sonnet-5"
+	if err := jobs.Save(job); err != nil {
+		t.Fatal(err)
+	}
+	if err := runWorker(t, deps, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if gotModel != "claude-sonnet-5" {
+		t.Errorf("worker passed model %q, want claude-sonnet-5", gotModel)
+	}
+}

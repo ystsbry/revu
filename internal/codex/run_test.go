@@ -7,7 +7,7 @@ import (
 
 func TestBuildExecArgsIncludesNetworkOverride(t *testing.T) {
 	t.Parallel()
-	args := buildExecArgs("$revu:pr 42", "/work", "/home/u/.revu")
+	args := buildExecArgs("$revu:pr 42", "/work", "/home/u/.revu", "")
 
 	if args[0] != "exec" {
 		t.Fatalf("first arg = %q, want \"exec\" (subcommand must come first)", args[0])
@@ -52,7 +52,7 @@ func TestBuildExecArgsPromptStaysLast(t *testing.T) {
 	// accident. --add-dir is the only variadic risk on `codex exec`;
 	// keeping --json (a non-variadic boolean) between it and the prompt
 	// terminates the capture cleanly.
-	args := buildExecArgs("$revu:pr 7 --focus security,perf", "/x", "/y")
+	args := buildExecArgs("$revu:pr 7 --focus security,perf", "/x", "/y", "")
 	addDirIdx := indexOf(args, "--add-dir")
 	jsonIdx := indexOf(args, "--json")
 	if addDirIdx < 0 || jsonIdx < 0 {
@@ -92,4 +92,25 @@ func indexOf(args []string, want string) int {
 		}
 	}
 	return -1
+}
+
+// A caller-picked model rides along as a per-invocation -c override; no
+// model means no override, leaving the user's configured default alone.
+func TestBuildExecArgsModelOverride(t *testing.T) {
+	args := buildExecArgs("$revu:pr 42", "/work", "/home/u/.revu", "gpt-5.3-codex")
+	found := false
+	for i, a := range args {
+		if a == "-c" && i+1 < len(args) && args[i+1] == `model="gpt-5.3-codex"` {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("model override missing from args: %v", args)
+	}
+
+	for _, a := range buildExecArgs("$revu:pr 42", "/work", "/home/u/.revu", "") {
+		if strings.HasPrefix(a, "model=") {
+			t.Fatalf("bare model= override must not appear without a model: %v", a)
+		}
+	}
 }

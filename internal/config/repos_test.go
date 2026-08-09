@@ -230,3 +230,28 @@ path = "/clones/r"
 		t.Fatalf("FindRepo = %+v, %v", def, ok)
 	}
 }
+
+func TestMergeReviewModels(t *testing.T) {
+	base := Defaults()
+	over := Config{}
+	over.Review.ClaudeModel = "claude-sonnet-5"
+
+	got, err := merge(base, over, "/l")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Review.ClaudeModel != "claude-sonnet-5" || got.Review.CodexModel != "" {
+		t.Fatalf("models = %q / %q", got.Review.ClaudeModel, got.Review.CodexModel)
+	}
+
+	// A later layer overrides; an empty layer leaves it alone.
+	over2 := Config{}
+	over2.Review.CodexModel = "gpt-5.3-codex"
+	got, err = merge(got, over2, "/l2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Review.ClaudeModel != "claude-sonnet-5" || got.Review.CodexModel != "gpt-5.3-codex" {
+		t.Fatalf("after 2nd merge: %q / %q", got.Review.ClaudeModel, got.Review.CodexModel)
+	}
+}

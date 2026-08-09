@@ -12,6 +12,8 @@ type StartReviewOptions struct {
 	PR     int
 	Engine string // "claude" | "codex"
 	Focus  string
+	// Model is the per-run model override. Empty = agent CLI default.
+	Model string
 	// WorkDir is the clone the worker runs in; the caller resolves it
 	// (registry or cwd) so a bad path fails here, not at worker boot.
 	WorkDir string
@@ -52,6 +54,7 @@ func StartReview(opts StartReviewOptions) (Job, error) {
 		return Job{}, err
 	}
 	job.WorkDir = opts.WorkDir
+	job.Model = opts.Model
 	if err := Save(job); err != nil {
 		return Job{}, err
 	}

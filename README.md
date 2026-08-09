@@ -282,6 +282,7 @@ $ revu guidelines list
 | `revu review PR_NUMBER --no-resume` | レビューを生成した時点で終了し、対話 TUI に入らない（[非対話モード](#非対話モードci--自動化から呼ぶ)） |
 | `revu review PR_NUMBER --no-resume --json` | 同上で、結果を JSON で標準出力（進捗は標準エラーへ） |
 | `revu review PR_NUMBER --bg [--repo <slug>]` | レビュー生成を detached なバックグラウンドジョブとして起動し即終了（`--repo` で登録リポジトリを cwd 外から指定可） |
+| `revu review PR_NUMBER --model <name>` | この実行だけモデルを指定（claude: `--model` / codex: `-c model=...` に伝搬。既定は config の `[review] claude_model` / `codex_model`、未設定なら各 CLI の既定） |
 | `revu jobs list` | バックグラウンドジョブの一覧（running / done / failed。ワーカー死亡も failed として検出） |
 | `revu jobs log <job-id>` | ジョブのログ（エージェントの進捗リレー）を表示 |
 | `revu validate [dir]` | review.yml と Markdown の整合性チェック |
@@ -477,6 +478,11 @@ horizontal_threshold = 100
 [review]
 # 新規レビューの review_event 既定値（情報用、現状未使用）
 default_event = "COMMENT"
+
+# レビュー生成に使うモデルの既定値（エンジン別）。revu review --model が
+# 実行単位で上書きする。空なら各エージェント CLI 自身の既定に従う。
+# claude_model = "claude-sonnet-5"
+# codex_model = "gpt-5.3-codex"
 
 # severity 定義。省略時は組み込みの 4 段階 (critical / major / minor / nit)。
 # 1 件でも定義すると組み込みは破棄され、ここに書いた集合だけが有効になる。
