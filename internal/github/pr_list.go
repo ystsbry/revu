@@ -1,11 +1,9 @@
 package github
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 )
 
@@ -49,15 +47,12 @@ func prListArgs(slug, search string) []string {
 // the cwd's repo (gh's default); an empty search lists every open PR.
 // Empty result and no error when nothing matches.
 func (c *GhClient) ListPRs(ctx context.Context, slug, search string) ([]PRListItem, error) {
-	cmd := exec.CommandContext(ctx, c.bin(), prListArgs(slug, search)...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("gh pr list: %w: %s", err, strings.TrimSpace(stderr.String()))
+	stdout, stderr, err := c.exec(ctx, nil, prListArgs(slug, search)...)
+	if err != nil {
+		return nil, fmt.Errorf("gh pr list: %w: %s", err, strings.TrimSpace(string(stderr)))
 	}
 	var items []PRListItem
-	if err := json.Unmarshal(stdout.Bytes(), &items); err != nil {
+	if err := json.Unmarshal(stdout, &items); err != nil {
 		return nil, fmt.Errorf("parse gh pr list output: %w", err)
 	}
 	return items, nil
