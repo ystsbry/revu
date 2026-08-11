@@ -47,9 +47,9 @@ func testReview(pr int) *model.Review {
 	}
 }
 
-// newTestShell wires L0→L1→L2→L3 with fake loaders so the whole stack can
-// be driven without touching ~/.revu. The L3 is quitOnQ via Embed.
-func newTestShell() (*Root, *RepoList, *PRList, *PRActions) {
+// newTestShell wires Home→L2→L3 with fake loaders so the whole stack can
+// be driven without touching ~/.revu or GitHub. The L3 is quitOnQ via Embed.
+func newTestShell() (*Root, *Home, *PRActions) {
 	l2 := NewPRActions("o/r", PRItem{Number: 5, ReviewedPath: "/dev/null/pr-5/abc1234"})
 	l2.load = func() (*model.Review, error) { return testReview(5), nil }
 	l2.loadJob = func() (*jobs.Job, []string) { return nil, nil }
@@ -57,168 +57,209 @@ func newTestShell() (*Root, *RepoList, *PRList, *PRActions) {
 		return Embed("Review #5", quitOnQ{}), nil
 	}
 
-	l1 := NewPRList("o/r", "")
-	l1.newWatch = func() *jobsWatcher { return nil }
-	l1.load = func(search string) ([]PRItem, error) {
-		return []PRItem{{Number: 5, ReviewedPath: "/dev/null/pr-5/abc1234", Submitted: true}}, nil
+	h := NewHome()
+	h.newWatch = func() *jobsWatcher { return nil }
+	h.loadRepos = func() (repoListData, error) {
+		return repoListData{Items: []RepoItem{{Slug: "o/r", Registered: true}}}, nil
 	}
-	l1.openPR = func(PRItem) Screen { return l2 }
-
-	l0 := NewRepoList()
-	l0.load = func() (repoListData, error) {
-		return repoListData{Items: []RepoItem{{Slug: "o/r", Registered: true, ReviewedCount: 1}}}, nil
+	h.loadPRs = func(slug, search string) ([]PRItem, error) {
+		return []PRItem{{Number: 5, Title: "feat: 計算処理の実装", Author: "ooooo",
+			ReviewedPath: "/dev/null/pr-5/abc1234"}}, nil
 	}
-	l0.openRepo = func(RepoItem) Screen { return l1 }
+	h.openPR = func(string, PRItem) Screen { return l2 }
 
-	return NewRoot(l0), l0, l1, l2
+	return NewRoot(h), h, l2
 }
 
-// The issue's acceptance criterion: L0→L1→L2→L3→back works end to end on
-// keyboard input alone, without the stack breaking.
+// The whole descent still works on the new layout: repos load, the first
+// repo auto-selects, its PR opens L2, the review opens L3, and quits pop
+// back layer by layer.
 func TestFullNavigationFlow(t *testing.T) {
 	t.Parallel()
-	r, _, _, _ := newTestShell()
-	drive(r, tea.WindowSizeMsg{Width: 100, Height: 30})
+	r, h, _ := newTestShell()
+	drive(r, tea.WindowSizeMsg{Width: 110, Height: 40})
 
-	// L0: load rows, select the repo.
-	drive(r, repoListLoadedMsg{data: repoListData{Items: []RepoItem{{Slug: "o/r", Registered: true, ReviewedCount: 1}}}})
-	drive(r, keyMsg("enter"))
-	if got := r.ActiveTitle(); got != "o/r" {
-		t.Fatalf("after L0 enter, active = %q, want o/r (L1)", got)
+	// Repos land; the first repo is selected and its PRs load.
+	drive(r, homeReposMsg{data: repoListData{Items: []RepoItem{{Slug: "o/r", Registered: true}}}})
+	if h.selected != 0 || len(h.items) != 1 {
+		t.Fatalf("initial selection/items = %d/%d, want 0/1", h.selected, len(h.items))
 	}
 
-	// L1: load rows, select the PR.
-	drive(r, prListLoadedMsg{items: []PRItem{{Number: 5, ReviewedPath: "/dev/null/pr-5/abc1234"}}})
+	// Focus the PR pane and open the card.
+	drive(r, keyMsg("tab"))
 	drive(r, keyMsg("enter"))
 	if got := r.ActiveTitle(); got != "PR #5" {
-		t.Fatalf("after L1 enter, active = %q, want PR #5 (L2)", got)
+		t.Fatalf("after card open, active = %q, want PR #5 (L2)", got)
 	}
 
-	// L2: load the review, run "open review".
+	// L2: load the review, run "open review" -> L3.
 	drive(r, prActionsLoadedMsg{review: testReview(5)})
 	drive(r, keyMsg("enter"))
 	if got := r.ActiveTitle(); got != "Review #5" {
 		t.Fatalf("after L2 enter, active = %q, want Review #5 (L3)", got)
 	}
-	if got := r.Depth(); got != 4 {
-		t.Fatalf("depth at L3 = %d, want 4", got)
+	if got := r.Depth(); got != 3 {
+		t.Fatalf("depth at L3 = %d, want 3", got)
 	}
 
-	// L3: "q" would quit a standalone program; embedded it must pop.
+	// L3 quits -> L2; esc -> Home.
 	drive(r, keyMsg("q"))
 	if got := r.ActiveTitle(); got != "PR #5" {
-		t.Fatalf("after L3 quit, active = %q, want PR #5 (back at L2)", got)
-	}
-
-	// Walk back down to the root.
-	drive(r, keyMsg("esc"))
-	if got := r.ActiveTitle(); got != "o/r" {
-		t.Fatalf("after L2 esc, active = %q, want o/r (L1)", got)
+		t.Fatalf("after L3 quit, active = %q, want PR #5", got)
 	}
 	drive(r, keyMsg("esc"))
-	if got := r.ActiveTitle(); got != "Repositories" {
-		t.Fatalf("after L1 esc, active = %q, want Repositories (L0)", got)
+	if got := r.ActiveTitle(); got != "Home" {
+		t.Fatalf("after L2 esc, active = %q, want Home", got)
 	}
 	if got := r.Depth(); got != 1 {
 		t.Fatalf("final depth = %d, want 1", got)
 	}
 }
 
-// Quitting at the root leaves the dashboard entirely — L0 has nothing to
-// pop back to.
-func TestRepoListQuitsAtRoot(t *testing.T) {
+// The selected repository carries the thick bar; selecting another repo
+// loads that repo's PRs.
+func TestHomeSidebarSelection(t *testing.T) {
 	t.Parallel()
-	r, _, _, _ := newTestShell()
-	drive(r, repoListLoadedMsg{})
-
-	_, cmd := r.Update(keyMsg("q"))
-	if !isQuit(cmd) {
-		t.Errorf("q at L0 should quit the dashboard")
-	}
-}
-
-func TestRepoListStates(t *testing.T) {
-	t.Parallel()
-	m := NewRepoList()
-
-	if !strings.Contains(m.View(), "Loading") {
-		t.Errorf("initial view should show the loading state:\n%s", m.View())
+	var loaded []string
+	h := NewHome()
+	h.newWatch = func() *jobsWatcher { return nil }
+	h.loadPRs = func(slug, search string) ([]PRItem, error) {
+		loaded = append(loaded, slug)
+		return nil, nil
 	}
 
-	m.Update(repoListLoadedMsg{err: errors.New("boom")})
-	if !strings.Contains(m.View(), "boom") {
-		t.Errorf("error view should surface the loader error:\n%s", m.View())
+	data := repoListData{Items: []RepoItem{
+		{Slug: "a/one", Registered: true},
+		{Slug: "b/two", Registered: true, Search: "label:x"},
+	}}
+	_, cmd := h.Update(homeReposMsg{data: data})
+	h.Update(cmd()) // initial auto-select of a/one
+
+	out := h.View()
+	if !strings.Contains(out, "▌ a/one") {
+		t.Errorf("selected repo must carry the thick bar:\n%s", out)
+	}
+	if strings.Contains(out, "▌ b/two") {
+		t.Errorf("unselected repo must not carry the bar:\n%s", out)
 	}
 
-	m.Update(repoListLoadedMsg{})
-	if !strings.Contains(m.View(), "No repositories to show") {
-		t.Errorf("empty view should explain how to get started:\n%s", m.View())
-	}
-
-	m.Update(repoListLoadedMsg{data: repoListData{Items: []RepoItem{
-		{Slug: "o/r", Registered: true, ReviewedCount: 3},
-	}}})
-	out := m.View()
-	if !strings.Contains(out, "o/r") || !strings.Contains(out, "(3 reviewed)") {
-		t.Errorf("loaded view should list the repo with its review count:\n%s", out)
-	}
-}
-
-func TestRepoListCursorMoves(t *testing.T) {
-	t.Parallel()
-	m := NewRepoList()
-	m.Update(repoListLoadedMsg{data: repoListData{Items: []RepoItem{{Slug: "a/a"}, {Slug: "b/b"}}}})
-
-	var pushed Screen
-	m.openRepo = func(it RepoItem) Screen {
-		s := newTestScreen(it.Slug)
-		pushed = s
-		return s
-	}
-
-	m.Update(keyMsg("j"))
-	_, cmd := m.Update(keyMsg("enter"))
+	// Move the sidebar cursor to the second repo and select it.
+	h.Update(keyMsg("j"))
+	_, cmd = h.Update(keyMsg("enter"))
 	if cmd == nil {
-		t.Fatal("enter on a row should push")
+		t.Fatal("selecting a repo should load its PRs")
 	}
-	if msg, ok := cmd().(PushMsg); !ok || msg.Screen != pushed {
-		t.Fatalf("enter should push the opened repo screen, got %T", cmd())
+	h.Update(cmd())
+	if len(loaded) != 2 || loaded[1] != "b/two" {
+		t.Fatalf("loaded = %v, want [a/one b/two]", loaded)
 	}
-	if pushed.Title() != "b/b" {
-		t.Errorf("cursor should have moved to the second repo, opened %q", pushed.Title())
-	}
-
-	// Cursor must clamp at both ends.
-	m.Update(keyMsg("j"))
-	m.Update(keyMsg("j"))
-	if m.cursor != 1 {
-		t.Errorf("cursor = %d, want clamped at 1", m.cursor)
-	}
-	m.Update(keyMsg("k"))
-	m.Update(keyMsg("k"))
-	m.Update(keyMsg("k"))
-	if m.cursor != 0 {
-		t.Errorf("cursor = %d, want clamped at 0", m.cursor)
+	if !strings.Contains(h.View(), "▌ b/two") {
+		t.Errorf("bar should move to the new selection:\n%s", h.View())
 	}
 }
 
-func TestPRListShowsBadges(t *testing.T) {
+// PR cards carry the number+title line and the author line, plus badges.
+func TestHomeCards(t *testing.T) {
 	t.Parallel()
-	m := NewPRList("o/r", "")
-	m.Update(prListLoadedMsg{items: []PRItem{
-		{Number: 5, Title: "add feature", ReviewedPath: "/p", Submitted: true},
-		{Number: 3, Title: "fix bug", JobState: "running"},
+	h := NewHome()
+	h.newWatch = func() *jobsWatcher { return nil }
+	h.loadPRs = func(slug, search string) ([]PRItem, error) { return nil, nil }
+	h.Update(tea.WindowSizeMsg{Width: 110, Height: 40})
+	h.repoData = repoListData{Items: []RepoItem{{Slug: "o/r", Registered: true}}}
+	h.selected = 0
+	h.prSlug = "o/r"
+	h.Update(homePRsMsg{slug: "o/r", items: []PRItem{
+		{Number: 667, Title: "feat: 計算処理の実装", Author: "ooooo", ReviewedPath: "/p", Submitted: true},
+		{Number: 668, Title: "fix: bug", Author: "alice", JobState: "running"},
 	}})
 
-	out := m.View()
-	if got := strings.Count(out, "[reviewed]"); got != 1 {
-		t.Errorf("[reviewed] count = %d, want 1:\n%s", got, out)
+	out := h.View()
+	for _, want := range []string{
+		"#667 feat: 計算処理の実装",
+		"author: ooooo  [reviewed]  [submitted]",
+		"#668 fix: bug",
+		"author: alice  [running]",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("cards missing %q:\n%s", want, out)
+		}
 	}
-	if got := strings.Count(out, "[submitted]"); got != 1 {
-		t.Errorf("[submitted] count = %d, want 1:\n%s", got, out)
+}
+
+// Only the PR tab is live; the future tabs render as placeholders.
+func TestHomeTabBar(t *testing.T) {
+	t.Parallel()
+	h := NewHome()
+	h.newWatch = func() *jobsWatcher { return nil }
+	out := h.View()
+	for _, want := range []string{"PR", "job", "report", "config"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("tab bar missing %q:\n%s", want, out)
+		}
 	}
-	if !strings.Contains(out, "[running]") {
-		t.Errorf("job state badge missing:\n%s", out)
+}
+
+// Profile name and registry warnings surface in the sidebar.
+func TestHomeProfileAndWarnings(t *testing.T) {
+	t.Parallel()
+	h := NewHome()
+	h.newWatch = func() *jobsWatcher { return nil }
+	h.Update(tea.WindowSizeMsg{Width: 110, Height: 40})
+	h.Update(homeReposMsg{data: repoListData{
+		Profile:  "ksm",
+		Warnings: []string{"profile references unregistered repo x/y"},
+		Items:    []RepoItem{{Slug: "a/a", Registered: true}},
+	}})
+
+	out := h.View()
+	for _, want := range []string{"[ksm]", "! profile references"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("sidebar missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// Error and empty states render usable guidance instead of a blank pane.
+func TestHomeStates(t *testing.T) {
+	t.Parallel()
+	h := NewHome()
+	h.newWatch = func() *jobsWatcher { return nil }
+
+	h.Update(homeReposMsg{err: errors.New("boom")})
+	if !strings.Contains(h.View(), "boom") {
+		t.Errorf("repo error not surfaced:\n%s", h.View())
+	}
+
+	h.Update(homeReposMsg{data: repoListData{}})
+	if !strings.Contains(h.View(), "no repositories") {
+		t.Errorf("empty registry guidance missing:\n%s", h.View())
+	}
+
+	h.repoData = repoListData{Items: []RepoItem{{Slug: "o/r", Registered: true}}}
+	h.selected = 0
+	h.prSlug = "o/r"
+	h.Update(homePRsMsg{slug: "o/r", err: errors.New("gh down")})
+	if !strings.Contains(h.View(), "gh down") {
+		t.Errorf("PR error not surfaced:\n%s", h.View())
+	}
+	h.Update(homePRsMsg{slug: "o/r", items: nil})
+	if !strings.Contains(h.View(), "no open PRs") {
+		t.Errorf("empty PR guidance missing:\n%s", h.View())
+	}
+}
+
+// A stale PR response for a repo the user already left must be dropped.
+func TestHomeIgnoresStalePRResponses(t *testing.T) {
+	t.Parallel()
+	h := NewHome()
+	h.newWatch = func() *jobsWatcher { return nil }
+	h.repoData = repoListData{Items: []RepoItem{{Slug: "a/a", Registered: true}, {Slug: "b/b", Registered: true}}}
+	h.selected = 1
+	h.prSlug = "b/b"
+
+	h.Update(homePRsMsg{slug: "a/a", items: []PRItem{{Number: 1}}})
+	if len(h.items) != 0 {
+		t.Errorf("stale response leaked into the list: %v", h.items)
 	}
 }
 
@@ -271,85 +312,6 @@ func TestQuitToPopUnwrapsBatches(t *testing.T) {
 // The acceptance criterion "per-repo 検索条件が反映され、画面内で切替できる":
 // "/" opens the search input seeded with the current condition; enter
 // applies it and reloads with the new value; esc cancels.
-func TestPRListSearchSwitch(t *testing.T) {
-	t.Parallel()
-	var got []string
-	m := NewPRList("o/r", "label:x")
-	m.load = func(search string) ([]PRItem, error) {
-		got = append(got, search)
-		return nil, nil
-	}
-
-	// Initial load uses the per-repo condition.
-	m.newWatch = func() *jobsWatcher { return nil }
-	m.Update(m.reload()())
-	if len(got) != 1 || got[0] != "label:x" {
-		t.Fatalf("initial searches = %v, want [label:x]", got)
-	}
-
-	// "/" → replace the query → enter reloads with it.
-	m.Update(keyMsg("/"))
-	if !m.searching {
-		t.Fatal("/ should enter search mode")
-	}
-	m.searchInput.SetValue("author:alice")
-	_, cmd := m.Update(keyMsg("enter"))
-	if cmd == nil {
-		t.Fatal("applying a search should reload")
-	}
-	m.Update(cmd())
-	if len(got) != 2 || got[1] != "author:alice" {
-		t.Fatalf("searches = %v, want author:alice applied", got)
-	}
-	if m.search != "author:alice" {
-		t.Errorf("search = %q, want author:alice", m.search)
-	}
-
-	// esc cancels without touching the applied condition.
-	m.Update(keyMsg("/"))
-	m.searchInput.SetValue("junk")
-	m.Update(keyMsg("esc"))
-	if m.searching || m.search != "author:alice" {
-		t.Errorf("esc should cancel edit; searching=%v search=%q", m.searching, m.search)
-	}
-}
-
-// While the search input is focused, list keys (q, j, ...) must go to the
-// input instead of popping the screen or moving the cursor.
-func TestPRListSearchModeCapturesKeys(t *testing.T) {
-	t.Parallel()
-	m := NewPRList("o/r", "")
-	m.Update(prListLoadedMsg{items: []PRItem{{Number: 1}, {Number: 2}}})
-
-	m.Update(keyMsg("/"))
-	m.searchInput.SetValue("")
-	_, cmd := m.Update(keyMsg("q"))
-	if cmd != nil {
-		if _, popped := cmd().(PopMsg); popped {
-			t.Fatal("q while searching must not pop the screen")
-		}
-	}
-	if m.cursor != 0 {
-		t.Errorf("cursor moved while typing: %d", m.cursor)
-	}
-}
-
-// The default search comes from github.DefaultPRSearch when the repo has
-// no per-repo override.
-func TestPRListDefaultSearch(t *testing.T) {
-	t.Parallel()
-	m := NewPRList("o/r", "")
-	if m.search != "review-requested:@me" {
-		t.Errorf("default search = %q", m.search)
-	}
-	m = NewPRList("o/r", "label:y")
-	if m.search != "label:y" {
-		t.Errorf("per-repo search = %q, want label:y", m.search)
-	}
-}
-
-// A PR without a local review shows GitHub metadata plus the run actions,
-// but neither [open] nor [resume] (there is nothing to open or resume).
 func TestPRActionsWithoutLocalReview(t *testing.T) {
 	t.Parallel()
 	l2 := NewPRActions("o/r", PRItem{Number: 9, Title: "new feature", Author: "alice"})
@@ -372,28 +334,3 @@ func TestPRActionsWithoutLocalReview(t *testing.T) {
 
 // L0 shows the active profile in the header and surfaces registry/profile
 // inconsistencies as warnings instead of dropping them silently.
-func TestRepoListShowsProfileAndWarnings(t *testing.T) {
-	t.Parallel()
-	m := NewRepoList()
-	m.Update(repoListLoadedMsg{data: repoListData{
-		Profile:  "work",
-		Warnings: []string{"profile references unregistered repo x/y"},
-		Items: []RepoItem{
-			{Slug: "a/a", Registered: true},
-			{Slug: "b/b", Registered: true, PathMissing: true},
-			{Slug: "c/c"},
-		},
-	}})
-
-	out := m.View()
-	for _, want := range []string{
-		"[profile: work]",
-		"warning: profile references unregistered repo x/y",
-		"[clone missing]",
-		"[unregistered]",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("view missing %q:\n%s", want, out)
-		}
-	}
-}

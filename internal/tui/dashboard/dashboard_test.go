@@ -289,13 +289,13 @@ func TestEmbedHostsTheReviewTUI(t *testing.T) {
 	}
 }
 
-func TestRepoListQuitsOnQAndEsc(t *testing.T) {
+func TestHomeQuitsOnQAndEsc(t *testing.T) {
 	t.Parallel()
 	for _, key := range []tea.KeyMsg{
 		{Type: tea.KeyRunes, Runes: []rune{'q'}},
 		{Type: tea.KeyEsc},
 	} {
-		m := NewRepoList()
+		m := NewHome()
 		_, cmd := m.Update(key)
 		if !isQuit(cmd) {
 			t.Errorf("key %q should quit the dashboard", key.String())
@@ -312,17 +312,17 @@ func TestRootPropagatesQuitFromTheRootScreen(t *testing.T) {
 		{Type: tea.KeyRunes, Runes: []rune{'q'}},
 		{Type: tea.KeyEsc},
 	} {
-		r := NewRoot(NewRepoList())
+		r := NewRoot(NewHome())
 		if _, cmd := r.Update(key); !isQuit(cmd) {
 			t.Errorf("key %q on the root screen should quit the dashboard", key.String())
 		}
 	}
 }
 
-func TestRepoListRendersWithoutASize(t *testing.T) {
+func TestHomeRendersWithoutASize(t *testing.T) {
 	t.Parallel()
 	// The first View happens before bubbletea delivers a WindowSizeMsg.
-	if out := NewRoot(NewRepoList()).View(); out == "" {
+	if out := NewRoot(NewHome()).View(); out == "" {
 		t.Errorf("dashboard rendered nothing before its first resize")
 	}
 }
