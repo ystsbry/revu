@@ -21,6 +21,7 @@ type Client interface {
 	AuthStatus(ctx context.Context) error
 	PRHead(ctx context.Context, slug string, number int) (string, error)
 	PRState(ctx context.Context, slug string, number int) (string, error)
+	PRTitle(ctx context.Context, slug string, number int) (string, error)
 	PostReview(ctx context.Context, slug string, number int, p Payload) (int64, error)
 	ListPRs(ctx context.Context, slug, search string) ([]PRListItem, error)
 	ListReviewRequestedPRs(ctx context.Context) ([]PRListItem, error)
@@ -242,4 +243,27 @@ func (c *GhClient) PostReview(ctx context.Context, slug string, number int, p Pa
 		return 0, fmt.Errorf("response has no review id; raw: %s", stdout.String())
 	}
 	return resp.ID, nil
+}
+
+// PRTitle returns the PR's title. Used to annotate background-review jobs
+// so the job list can show what each run was about.
+func (c *GhClient) PRTitle(ctx context.Context, slug string, number int) (string, error) {
+	cmd := exec.CommandContext(ctx, c.bin(),
+		"pr", "view", strconv.Itoa(number),
+		"--repo", slug,
+		"--json", "title",
+	)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("gh pr view %d (title): %w: %s", number, err, strings.TrimSpace(stderr.String()))
+	}
+	var resp struct {
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
+		return "", fmt.Errorf("parse gh pr view title output: %w", err)
+	}
+	return resp.Title, nil
 }

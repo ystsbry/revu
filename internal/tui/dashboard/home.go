@@ -3,16 +3,25 @@ package dashboard
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	zone "github.com/lrstanley/bubblezone"
+
+	"github.com/ystsbry/revu/internal/jobs"
 )
 
 // Pane focus states for the home screen.
 const (
 	focusSidebar = iota
 	focusPRList
+)
+
+// Content tabs.
+const (
+	tabPR = iota
+	tabJob
 )
 
 // sidebarWidth is the fixed column budget for the repository pane.
@@ -24,9 +33,11 @@ const cardHeight = 4
 // Home zone ids.
 const (
 	zoneHomeTabPR     = "home:tab:pr"
+	zoneHomeTabJob    = "home:tab:job"
 	zoneHomeSidebar   = "home:sidebar"
 	zoneHomeRepoPref  = "home:repo:" // + sidebar index
 	zoneHomeCardPref  = "home:card:" // + pr index
+	zoneHomeJobPref   = "home:job:"  // + job index
 	zoneHomePRListBox = "home:prlist"
 )
 
@@ -44,6 +55,12 @@ type homePRsMsg struct {
 	err   error
 }
 
+// homeJobsMsg carries the cross-repo background-job list (newest first).
+type homeJobsMsg struct {
+	jobs []jobs.Job
+	err  error
+}
+
 // Home is the dashboard's root screen: a repository sidebar on the left,
 // tab bar on top, and the selected repository's open PRs as cards on the
 // right. Selecting a card pushes the PR-action screen (and the review TUI
@@ -54,6 +71,7 @@ type Home struct {
 
 	zones *zone.Manager
 	focus int
+	tab   int
 
 	// Sidebar.
 	repoLoading bool
@@ -70,11 +88,19 @@ type Home struct {
 	prCursor  int
 	prOffset  int
 
+	// Job list (cross-repo, newest first).
+	jobsLoading bool
+	jobsErr     error
+	jobItems    []jobs.Job
+	jobCursor   int
+	jobOffset   int
+
 	watcher  *jobsWatcher
 	newWatch func() *jobsWatcher
 
 	loadRepos func() (repoListData, error)
 	loadPRs   func(slug, search string) ([]PRItem, error)
+	loadJobs  func() ([]jobs.Job, error)
 	openPR    func(slug string, it PRItem) Screen
 }
 
@@ -85,6 +111,7 @@ func NewHome() *Home {
 		selected:    -1,
 		loadRepos:   loadReposFromConfig,
 		loadPRs:     loadPRsFromGitHub,
+		loadJobs:    jobs.List,
 		openPR:      func(slug string, it PRItem) Screen { return NewPRActions(slug, it) },
 	}
 	h.newWatch = func() *jobsWatcher {
@@ -110,7 +137,18 @@ func (h *Home) Init() tea.Cmd {
 	if h.watcher == nil && h.newWatch != nil {
 		h.watcher = h.newWatch()
 	}
-	return tea.Batch(h.reloadRepos(), h.watcher.wait())
+	return tea.Batch(h.reloadRepos(), h.reloadJobs(), h.watcher.wait())
+}
+
+// reloadJobs refreshes the cross-repo job list (jobs.List is already
+// sorted newest first).
+func (h *Home) reloadJobs() tea.Cmd {
+	h.jobsLoading = true
+	load := h.loadJobs
+	return func() tea.Msg {
+		all, err := load()
+		return homeJobsMsg{jobs: all, err: err}
+	}
 }
 
 func (h *Home) reloadRepos() tea.Cmd {
@@ -181,9 +219,19 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		h.ensureCardVisible()
 
+	case homeJobsMsg:
+		h.jobsLoading = false
+		h.jobsErr = msg.err
+		h.jobItems = msg.jobs
+		if h.jobCursor >= len(h.jobItems) {
+			h.jobCursor = max(0, len(h.jobItems)-1)
+		}
+		h.ensureJobVisible()
+
 	case jobsChangedMsg:
-		// A job started or finished: refresh badges and re-arm.
-		return h, tea.Batch(h.reloadPRs(), h.watcher.wait())
+		// A job started or finished: refresh badges + the job tab and
+		// re-arm the watcher.
+		return h, tea.Batch(h.reloadPRs(), h.reloadJobs(), h.watcher.wait())
 
 	case tea.MouseMsg:
 		return h.updateMouse(msg)
@@ -199,7 +247,13 @@ func (h *Home) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "esc":
 		return h, tea.Quit
 	case "r":
-		return h, tea.Batch(h.reloadRepos(), h.reloadPRs())
+		return h, tea.Batch(h.reloadRepos(), h.reloadPRs(), h.reloadJobs())
+	case "1":
+		h.tab = tabPR
+		return h, nil
+	case "2":
+		h.tab = tabJob
+		return h, nil
 	case "tab", "h", "l", "left", "right":
 		if h.focus == focusSidebar {
 			h.focus = focusPRList
@@ -208,24 +262,38 @@ func (h *Home) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return h, nil
 	case "j", "down":
-		if h.focus == focusSidebar {
+		switch {
+		case h.focus == focusSidebar:
 			h.repoCursor = min(h.repoCursor+1, len(h.repoData.Items)-1)
-		} else {
+		case h.tab == tabJob:
+			h.jobCursor = min(h.jobCursor+1, len(h.jobItems)-1)
+			h.ensureJobVisible()
+		default:
 			h.prCursor = min(h.prCursor+1, len(h.items)-1)
 			h.ensureCardVisible()
 		}
 		return h, nil
 	case "k", "up":
-		if h.focus == focusSidebar {
+		switch {
+		case h.focus == focusSidebar:
 			h.repoCursor = max(h.repoCursor-1, 0)
-		} else {
+		case h.tab == tabJob:
+			h.jobCursor = max(h.jobCursor-1, 0)
+			h.ensureJobVisible()
+		default:
 			h.prCursor = max(h.prCursor-1, 0)
 			h.ensureCardVisible()
 		}
 		return h, nil
 	case "enter":
 		if h.focus == focusSidebar {
+			// Picking a repo is a PR-tab affair: switch there so the
+			// selection's effect is visible.
+			h.tab = tabPR
 			return h, h.selectRepo(h.repoCursor)
+		}
+		if h.tab == tabJob {
+			return h, nil // job cards have no drill-down yet
 		}
 		return h, h.openCursorPR()
 	}
@@ -248,10 +316,15 @@ func (h *Home) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if msg.Button == tea.MouseButtonWheelUp {
 			delta = -1
 		}
-		if hit(h.zones, zoneHomeSidebar, msg) {
+		switch {
+		case hit(h.zones, zoneHomeSidebar, msg):
 			h.focus = focusSidebar
 			h.repoCursor = max(0, min(h.repoCursor+delta, len(h.repoData.Items)-1))
-		} else {
+		case h.tab == tabJob:
+			h.focus = focusPRList
+			h.jobCursor = max(0, min(h.jobCursor+delta, len(h.jobItems)-1))
+			h.ensureJobVisible()
+		default:
 			h.focus = focusPRList
 			h.prCursor = max(0, min(h.prCursor+delta, len(h.items)-1))
 			h.ensureCardVisible()
@@ -261,9 +334,18 @@ func (h *Home) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return h, nil
 	}
 
+	if hit(h.zones, zoneHomeTabPR, msg) {
+		h.tab = tabPR
+		return h, nil
+	}
+	if hit(h.zones, zoneHomeTabJob, msg) {
+		h.tab = tabJob
+		return h, nil
+	}
 	for i := range h.repoData.Items {
 		if hit(h.zones, fmt.Sprintf("%s%d", zoneHomeRepoPref, i), msg) {
 			h.focus = focusSidebar
+			h.tab = tabPR
 			return h, h.selectRepo(i)
 		}
 	}
@@ -309,6 +391,22 @@ func (h *Home) cardsPerPage() int {
 	return usable / cardHeight
 }
 
+func (h *Home) ensureJobVisible() {
+	per := h.cardsPerPage()
+	if h.jobCursor < h.jobOffset {
+		h.jobOffset = h.jobCursor
+	}
+	if h.jobCursor >= h.jobOffset+per {
+		h.jobOffset = h.jobCursor - per + 1
+	}
+	if maxOff := max(0, len(h.jobItems)-per); h.jobOffset > maxOff {
+		h.jobOffset = maxOff
+	}
+	if h.jobOffset < 0 {
+		h.jobOffset = 0
+	}
+}
+
 func (h *Home) ensureCardVisible() {
 	per := h.cardsPerPage()
 	if h.prCursor < h.prOffset {
@@ -327,22 +425,34 @@ func (h *Home) ensureCardVisible() {
 
 func (h *Home) View() string {
 	sidebar := h.sidebarView()
-	content := lipgloss.JoinVertical(lipgloss.Left, h.tabBarView(), h.prListView())
+	main := h.prListView()
+	if h.tab == tabJob {
+		main = h.jobListView()
+	}
+	content := lipgloss.JoinVertical(lipgloss.Left, h.tabBarView(), main)
 	// Scan at the screen's outermost point: the shell offsets mouse
 	// coordinates for the breadcrumb row, so positions stay Home-relative.
 	return h.zones.Scan(lipgloss.JoinHorizontal(lipgloss.Top, sidebar, content))
 }
 
-// tabBarView renders the PR tab as active and the future tabs (job /
-// report / config) as visibly disabled placeholders.
+// tabBarView renders the PR and job tabs (clickable) and the future tabs
+// (report / config) as visibly disabled placeholders.
 func (h *Home) tabBarView() string {
-	active := lipgloss.NewStyle().Bold(true).Padding(0, 2).
+	activeSt := lipgloss.NewStyle().Bold(true).Padding(0, 2).
 		Background(lipgloss.Color("57")).Foreground(lipgloss.Color("229"))
+	inactiveSt := lipgloss.NewStyle().Padding(0, 2)
 	disabled := lipgloss.NewStyle().Padding(0, 2).Faint(true)
 
+	tab := func(id, label string, on bool) string {
+		st := inactiveSt
+		if on {
+			st = activeSt
+		}
+		return h.zones.Mark(id, st.Render(label))
+	}
 	tabs := []string{
-		h.zones.Mark(zoneHomeTabPR, active.Render("PR")),
-		disabled.Render("job"),
+		tab(zoneHomeTabPR, "PR", h.tab == tabPR),
+		tab(zoneHomeTabJob, "job", h.tab == tabJob),
 		disabled.Render("report"),
 		disabled.Render("config"),
 	}
@@ -427,6 +537,76 @@ func (h *Home) prListView() string {
 	footer := lipgloss.NewStyle().Faint(true).Padding(0, 1).
 		Render("[enter/click] open  [j/k/wheel] move  [tab] switch pane  [r] reload  [q]uit")
 	return lipgloss.JoinVertical(lipgloss.Left, h.zones.Mark(zoneHomePRListBox, body), footer)
+}
+
+// jobListView renders the cross-repo background jobs as cards, newest
+// first (jobs.List order).
+func (h *Home) jobListView() string {
+	width := h.width - sidebarWidth - 4
+	if width < 30 {
+		width = 30
+	}
+
+	var body string
+	switch {
+	case h.jobsLoading && len(h.jobItems) == 0:
+		body = faintBox("loading jobs ...")
+	case h.jobsErr != nil:
+		body = faintBox(fmt.Sprintf("failed to list jobs: %v\n\n[r] retry", h.jobsErr))
+	case len(h.jobItems) == 0:
+		body = faintBox("no background jobs yet\nstart one from a PR card (background job) or `revu review <PR> --bg`")
+	default:
+		body = h.jobCardsView(width)
+	}
+
+	footer := lipgloss.NewStyle().Faint(true).Padding(0, 1).
+		Render("[j/k/wheel] move  [1] PR tab  [r] reload  [q]uit")
+	return lipgloss.JoinVertical(lipgloss.Left, body, footer)
+}
+
+func (h *Home) jobCardsView(width int) string {
+	normal := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		Padding(0, 1).
+		Width(width)
+	selected := normal.BorderForeground(lipgloss.Color("205"))
+
+	now := time.Now()
+	end := min(h.jobOffset+h.cardsPerPage(), len(h.jobItems))
+	cards := make([]string, 0, end-h.jobOffset)
+	for i := h.jobOffset; i < end; i++ {
+		j := h.jobItems[i]
+		state, _ := j.Effective(now)
+		prefix := fmt.Sprintf("%s %s #%d ", jobStateLabel(state), j.Slug, j.PR)
+		title := prefix + truncateCells(j.PRTitle, width-4-lipgloss.Width(prefix))
+		meta := fmt.Sprintf("workflow: %s  %s", j.ID, j.StartedAt.Format("2006-01-02 15:04"))
+		st := normal
+		if i == h.jobCursor {
+			st = selected
+			title = lipgloss.NewStyle().Bold(true).Render(title)
+		}
+		card := st.Render(title + "\n" + lipgloss.NewStyle().Faint(true).Render(truncateCells(meta, width-4)))
+		cards = append(cards, h.zones.Mark(fmt.Sprintf("%s%d", zoneHomeJobPref, i), card))
+	}
+	if h.jobOffset+h.cardsPerPage() < len(h.jobItems) || h.jobOffset > 0 {
+		pos := lipgloss.NewStyle().Faint(true).Padding(0, 1).
+			Render(fmt.Sprintf("%d-%d / %d", h.jobOffset+1, end, len(h.jobItems)))
+		cards = append(cards, pos)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, cards...)
+}
+
+// jobStateLabel renders 成功/失敗/実行中 as a compact colored marker.
+func jobStateLabel(st jobs.State) string {
+	switch st {
+	case jobs.StateDone:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("82")).Render("✓ done")
+	case jobs.StateFailed:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render("✗ failed")
+	default:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render("● running")
+	}
 }
 
 func (h *Home) cardsView(width int) string {

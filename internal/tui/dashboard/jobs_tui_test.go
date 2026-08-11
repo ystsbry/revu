@@ -80,6 +80,7 @@ func TestHomeReloadsPRsOnJobsChanged(t *testing.T) {
 	loads := 0
 	m := NewHome()
 	m.newWatch = func() *jobsWatcher { return nil }
+	m.loadJobs = func() ([]jobs.Job, error) { return nil, nil }
 	m.loadRepos = func() (repoListData, error) {
 		return repoListData{Items: []RepoItem{{Slug: "o/r", Registered: true}}}, nil
 	}
@@ -524,5 +525,98 @@ func TestHomeMouse(t *testing.T) {
 	h.Update(tea.MouseMsg{X: 100, Y: 10, Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
 	if h.prCursor != 1 {
 		t.Errorf("wheel over cards: prCursor = %d, want 1", h.prCursor)
+	}
+}
+
+// The job tab lists cross-repo jobs as cards with repo, PR number+title,
+// state, and the job id ("workflow"), newest first as delivered by the
+// loader.
+func TestHomeJobTab(t *testing.T) {
+	t.Parallel()
+	h := NewHome()
+	h.newWatch = func() *jobsWatcher { return nil }
+	h.loadRepos = func() (repoListData, error) { return repoListData{}, nil }
+	h.loadPRs = func(string, string) ([]PRItem, error) { return nil, nil }
+	newer := jobs.Job{
+		ID: "20260811-120000-o-r-pr9-aaaa", Slug: "o/r", PR: 9,
+		PRTitle: "feat: 計算処理の実装", State: jobs.StateDone,
+		StartedAt: time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC),
+	}
+	older := jobs.Job{
+		ID: "20260810-090000-o-r-pr7-bbbb", Slug: "o/r", PR: 7,
+		PRTitle: "fix: bug", State: jobs.StateFailed, Err: "boom",
+		StartedAt: time.Date(2026, 8, 10, 9, 0, 0, 0, time.UTC),
+	}
+	h.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	h.Update(homeJobsMsg{jobs: []jobs.Job{newer, older}})
+
+	// Key "2" switches to the job tab.
+	h.Update(keyMsg("2"))
+	out := h.View()
+	for _, want := range []string{
+		"✓ done", "o/r #9 feat: 計算処理の実装", "workflow: 20260811-120000-o-r-pr9-aaaa",
+		"✗ failed", "o/r #7 fix: bug", "workflow: 20260810-090000-o-r-pr7-bbbb",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("job tab missing %q:\n%s", want, out)
+		}
+	}
+	// Newest first: the newer job renders above the older one.
+	if strings.Index(out, "pr9-aaaa") > strings.Index(out, "pr7-bbbb") {
+		t.Errorf("jobs not newest-first:\n%s", out)
+	}
+
+	// Key "1" goes back to the PR tab.
+	h.Update(keyMsg("1"))
+	if strings.Contains(h.View(), "workflow:") {
+		t.Errorf("PR tab should not render job cards")
+	}
+}
+
+// A running job whose worker died renders as failed on the job tab too.
+func TestHomeJobTabCrashAware(t *testing.T) {
+	t.Parallel()
+	h := NewHome()
+	h.newWatch = func() *jobsWatcher { return nil }
+	dead := jobs.Job{
+		ID: "j1", Slug: "o/r", PR: 1, State: jobs.StateRunning,
+		PID: deadTestPID(t), StartedAt: time.Now(),
+	}
+	h.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	h.Update(homeJobsMsg{jobs: []jobs.Job{dead}})
+	h.Update(keyMsg("2"))
+
+	if !strings.Contains(h.View(), "✗ failed") {
+		t.Errorf("crashed worker should render as failed:\n%s", h.View())
+	}
+}
+
+// jobsChangedMsg refreshes the job tab as well as the PR badges.
+func TestHomeJobsChangedReloadsJobList(t *testing.T) {
+	t.Parallel()
+	jobLoads := 0
+	h := NewHome()
+	h.newWatch = func() *jobsWatcher { return nil }
+	h.loadJobs = func() ([]jobs.Job, error) {
+		jobLoads++
+		return nil, nil
+	}
+	h.loadPRs = func(string, string) ([]PRItem, error) { return nil, nil }
+
+	_, cmd := h.Update(jobsChangedMsg{})
+	if cmd == nil {
+		t.Fatal("jobsChangedMsg should reload")
+	}
+	if msg := cmd(); msg != nil {
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, c := range batch {
+				if c != nil {
+					h.Update(c())
+				}
+			}
+		}
+	}
+	if jobLoads != 1 {
+		t.Errorf("job loads = %d, want 1", jobLoads)
 	}
 }

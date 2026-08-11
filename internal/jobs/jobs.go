@@ -46,6 +46,9 @@ type Job struct {
 	// Model is the per-run model override handed to the engine. Empty
 	// means the agent CLI's own default.
 	Model string `json:"model,omitempty"`
+	// PRTitle is the PR's title at start time, recorded best-effort so
+	// job lists can say what a run was about. May be empty.
+	PRTitle string `json:"pr_title,omitempty"`
 
 	State State `json:"state"`
 	PID   int   `json:"pid,omitempty"`
