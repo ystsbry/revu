@@ -73,29 +73,35 @@ func deadTestPID(t *testing.T) int {
 	return cmd.Process.Pid
 }
 
-// A job-book change must refresh the PR list (badges) and re-arm the
+// A job-book change must refresh the PR cards (badges) and re-arm the
 // watcher for the next transition.
-func TestPRListReloadsOnJobsChanged(t *testing.T) {
+func TestHomeReloadsPRsOnJobsChanged(t *testing.T) {
 	t.Parallel()
 	loads := 0
-	m := NewPRList("o/r", "")
+	m := NewHome()
 	m.newWatch = func() *jobsWatcher { return nil }
-	m.load = func(search string) ([]PRItem, error) {
+	m.loadRepos = func() (repoListData, error) {
+		return repoListData{Items: []RepoItem{{Slug: "o/r", Registered: true}}}, nil
+	}
+	m.loadPRs = func(slug, search string) ([]PRItem, error) {
 		loads++
-		return nil, nil
+		return []PRItem{{Number: 5}}, nil
 	}
 
-	m.Update(m.reload()())
+	// Load repos; the first repo is auto-selected and its PRs load.
+	_, cmd := m.Update(homeReposMsg{data: repoListData{Items: []RepoItem{{Slug: "o/r", Registered: true}}}})
+	if cmd == nil {
+		t.Fatal("repo load should trigger the initial PR load")
+	}
+	m.Update(cmd())
 	if loads != 1 {
 		t.Fatalf("loads = %d, want 1", loads)
 	}
 
-	_, cmd := m.Update(jobsChangedMsg{})
+	_, cmd = m.Update(jobsChangedMsg{})
 	if cmd == nil {
 		t.Fatal("jobsChangedMsg should trigger a reload")
 	}
-	// The returned batch contains the reload; executing its parts must
-	// bump the load counter (the nil watcher contributes nothing).
 	if msg := cmd(); msg != nil {
 		if batch, ok := msg.(tea.BatchMsg); ok {
 			for _, c := range batch {
@@ -427,5 +433,96 @@ func TestPRActionsExecDoneReloads(t *testing.T) {
 	}
 	if loads != 1 {
 		t.Errorf("review loads = %d, want 1", loads)
+	}
+}
+
+// scanFindHome renders the home screen until the zone id is known
+// (bubblezone records positions on a worker goroutine).
+func scanFindHome(t *testing.T, h *Home, id string) (x, y int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		h.View()
+		info := h.zones.Get(id)
+		if info != nil && !info.IsZero() {
+			return info.StartX, info.StartY
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("zone %s never appeared", id)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func homeClick(x, y int) tea.MouseMsg {
+	return tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress}
+}
+
+// Clicking a sidebar repo selects it (and loads its PRs); clicking a card
+// selects it, and clicking the selected card opens the PR screen.
+func TestHomeMouse(t *testing.T) {
+	t.Parallel()
+	var loaded []string
+	var opened *PRItem
+	h := NewHome()
+	h.newWatch = func() *jobsWatcher { return nil }
+	h.loadPRs = func(slug, search string) ([]PRItem, error) {
+		loaded = append(loaded, slug)
+		return []PRItem{
+			{Number: 667, Title: "feat: one", Author: "a"},
+			{Number: 668, Title: "fix: two", Author: "b"},
+		}, nil
+	}
+	h.openPR = func(slug string, it PRItem) Screen {
+		opened = &it
+		return newTestScreen("PR")
+	}
+	h.Update(tea.WindowSizeMsg{Width: 110, Height: 40})
+
+	data := repoListData{Items: []RepoItem{
+		{Slug: "a/one", Registered: true},
+		{Slug: "b/two", Registered: true},
+	}}
+	_, cmd := h.Update(homeReposMsg{data: data})
+	h.Update(cmd()) // auto-select a/one
+
+	// Click the second repo: selection + load move there.
+	x, y := scanFindHome(t, h, zoneHomeRepoPref+"1")
+	if _, cmd := h.Update(homeClick(x, y)); cmd != nil {
+		h.Update(cmd())
+	}
+	if h.selected != 1 || len(loaded) != 2 || loaded[1] != "b/two" {
+		t.Fatalf("click repo: selected=%d loaded=%v", h.selected, loaded)
+	}
+
+	// Click the second card: select. Click again: open.
+	x, y = scanFindHome(t, h, zoneHomeCardPref+"1")
+	h.Update(homeClick(x, y))
+	if h.prCursor != 1 {
+		t.Fatalf("card click should select, cursor = %d", h.prCursor)
+	}
+	_, cmd = h.Update(homeClick(x, y))
+	if cmd == nil {
+		t.Fatal("second card click should open the PR")
+	}
+	if msg, ok := cmd().(PushMsg); !ok {
+		t.Fatalf("expected PushMsg, got %T", msg)
+	}
+	if opened == nil || opened.Number != 668 {
+		t.Fatalf("opened PR = %+v, want #668", opened)
+	}
+
+	// Wheel over the sidebar moves the repo cursor; elsewhere it moves
+	// the card cursor.
+	sx, sy := scanFindHome(t, h, zoneHomeSidebar)
+	h.repoCursor = 0
+	h.Update(tea.MouseMsg{X: sx + 1, Y: sy + 1, Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+	if h.repoCursor != 1 {
+		t.Errorf("wheel over sidebar: repoCursor = %d, want 1", h.repoCursor)
+	}
+	h.prCursor = 0
+	h.Update(tea.MouseMsg{X: 100, Y: 10, Button: tea.MouseButtonWheelDown, Action: tea.MouseActionPress})
+	if h.prCursor != 1 {
+		t.Errorf("wheel over cards: prCursor = %d, want 1", h.prCursor)
 	}
 }
