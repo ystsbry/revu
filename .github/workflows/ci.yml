@@ -109,9 +109,6 @@ jobs:
     runs-on: ubuntu-latest
     # dupl / gocyclo の分だけ lint job より長めに取る。
     timeout-minutes: 15
-    # 既知の指摘が残っている段階なので、失敗しても PR をブロックしない。
-    # ここを外すのがこのプロジェクトのゴール。
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
 
@@ -122,6 +119,13 @@ jobs:
           cache: false
 
       - uses: golangci/golangci-lint-action@v9
+        # job ではなく step に付けるのが重要。
+        # job レベルに付けるとワークフロー全体の conclusion は success になるが、
+        # job 自身の conclusion は failure のままで、PR には赤いチェックとして残る。
+        # step レベルなら job が success になり、指摘は annotation としてだけ出る。
+        # 「常に赤い」状態が続くと本物の失敗を見逃すため、こちらを採る。
+        # ここを外してブロッキングに昇格させるのがこのプロジェクトのゴール。
+        continue-on-error: true
         with:
           # lint job と同じバージョンを使う。更新するときは両方揃えること。
           version: v2.12.2
