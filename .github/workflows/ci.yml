@@ -114,6 +114,8 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      # コメントに貼る job の URL を Actions API から引くため。
+      actions: read
     steps:
       - uses: actions/checkout@v7
 
@@ -140,7 +142,25 @@ jobs:
 
       - name: build lint report
         id: lint
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          # コメントから直接 job のログへ飛べるようにする。
+          # job の数値 ID は workflow context から取れないため API で引き、
+          # 失敗したら run の URL にフォールバックする。
+          job_url=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs" \
+            --jq '.jobs[] | select(.name == "lint-next") | .html_url' 2>/dev/null | head -1 || true)
+          # API が失敗すると stdout にエラーボディが漏れることがあるため、
+          # 空チェックではなく URL の形そのものを検証する。
+          case "$job_url" in
+            https://*) ;;
+            *) job_url="$RUN_URL" ;;
+          esac
+          echo "job_url=$job_url" >> "$GITHUB_OUTPUT"
+          echo "run_url=$RUN_URL" >> "$GITHUB_OUTPUT"
+
           # 上の step が lint 実行前に落ちた場合（インストール失敗など）に備える。
           if [ ! -f lint-report.json ]; then
             echo "total=unknown" >> "$GITHUB_OUTPUT"
@@ -187,7 +207,7 @@ jobs:
                      | "\(.Pos.Filename):\(.Pos.Line): \(.Text) (\(.FromLinter))"' lint-report.json
               if [ "$total" -gt 100 ]; then
                 echo
-                echo "... 他 $((total - 100)) 件（全件は job ログ、または artifact の lint-report.json を参照）"
+                echo "... 他 $((total - 100)) 件（全件は上記の実行ログ、または artifact の lint-report.json を参照）"
               fi
               echo '```'
               echo
@@ -212,7 +232,15 @@ jobs:
           message: |
             ## Lint (next): ${{ steps.lint.outputs.total }} issues
 
-            standard セットを超える拡張 linter（`.golangci.next.yml`）の結果。現時点では**非ブロッキング**。
+            standard セットを超える拡張 linter（`.golangci.next.yml`）の結果。
+            [実行ログ](${{ steps.lint.outputs.job_url }}) ・ [全件 JSON (artifact)](${{ steps.lint.outputs.run_url }})
+
+            **このチェックは意図的に非ブロッキングです。** 既存コードに未返済の指摘が残っているため、
+            ここを赤くすると全 PR が常時赤くなり、本物の失敗を見逃すことになります。
+            守るべきラインはブロッキングの `lint` job（standard セット・常にゼロ）が担保しています。
+
+            指摘がゼロになったら `.golangci.next.yml` を `.golangci.yml` に統合し、
+            この job も `lint` に統合して削除する予定です。
             ${{ steps.lint.outputs.report }}
 
   format:
