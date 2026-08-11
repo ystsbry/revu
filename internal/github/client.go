@@ -51,10 +51,35 @@ type PRMeta struct {
 	BaseRepo   string
 }
 
+// runner executes bin with args, writing stdin (nil for none) to the
+// process and returning stdout and stderr separately.
+//
+// GhClient goes through this rather than calling exec directly so tests can
+// assert on the argv gh would receive — a dropped --repo or a missing
+// --json field is the kind of bug that only shows up against the real API.
+type runner func(ctx context.Context, bin string, stdin []byte, args ...string) (stdout, stderr []byte, err error)
+
+// execRunner is the production runner: it really spawns gh.
+func execRunner(ctx context.Context, bin string, stdin []byte, args ...string) ([]byte, []byte, error) {
+	cmd := exec.CommandContext(ctx, bin, args...)
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return stdout.Bytes(), stderr.Bytes(), err
+}
+
 // GhClient invokes the gh CLI as a subprocess.
 type GhClient struct {
 	// Bin is the path to the gh executable. Empty means "look up gh on PATH".
 	Bin string
+
+	// run overrides how the subprocess is executed. Nil — the only value
+	// production code ever leaves here — means execRunner.
+	run runner
 }
 
 // New returns a GhClient that uses the gh executable on PATH.
@@ -67,13 +92,19 @@ func (c *GhClient) bin() string {
 	return "gh"
 }
 
+func (c *GhClient) exec(ctx context.Context, stdin []byte, args ...string) (stdout, stderr []byte, err error) {
+	r := c.run
+	if r == nil {
+		r = execRunner
+	}
+	return r(ctx, c.bin(), stdin, args...)
+}
+
 // AuthStatus runs `gh auth status` and returns nil if authenticated.
 func (c *GhClient) AuthStatus(ctx context.Context) error {
-	cmd := exec.CommandContext(ctx, c.bin(), "auth", "status")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		out := strings.TrimSpace(stderr.String())
+	_, stderr, err := c.exec(ctx, nil, "auth", "status")
+	if err != nil {
+		out := strings.TrimSpace(string(stderr))
 		if out == "" {
 			return fmt.Errorf("gh auth status: %w", err)
 		}
@@ -84,21 +115,18 @@ func (c *GhClient) AuthStatus(ctx context.Context) error {
 
 // PRHead returns the head_sha (headRefOid) of the PR.
 func (c *GhClient) PRHead(ctx context.Context, slug string, number int) (string, error) {
-	cmd := exec.CommandContext(ctx, c.bin(),
+	stdout, stderr, err := c.exec(ctx, nil,
 		"pr", "view", strconv.Itoa(number),
 		"--repo", slug,
 		"--json", "headRefOid",
 	)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("gh pr view: %w: %s", err, strings.TrimSpace(stderr.String()))
+	if err != nil {
+		return "", fmt.Errorf("gh pr view: %w: %s", err, strings.TrimSpace(string(stderr)))
 	}
 	var resp struct {
 		HeadRefOid string `json:"headRefOid"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
+	if err := json.Unmarshal(stdout, &resp); err != nil {
 		return "", fmt.Errorf("parse gh pr view output: %w", err)
 	}
 	if resp.HeadRefOid == "" {
@@ -111,21 +139,18 @@ func (c *GhClient) PRHead(ctx context.Context, slug string, number int) (string,
 // Used by `revu prune` to classify which review directories are safe to
 // delete.
 func (c *GhClient) PRState(ctx context.Context, slug string, number int) (string, error) {
-	cmd := exec.CommandContext(ctx, c.bin(),
+	stdout, stderr, err := c.exec(ctx, nil,
 		"pr", "view", strconv.Itoa(number),
 		"--repo", slug,
 		"--json", "state",
 	)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("gh pr view %d (state): %w: %s", number, err, strings.TrimSpace(stderr.String()))
+	if err != nil {
+		return "", fmt.Errorf("gh pr view %d (state): %w: %s", number, err, strings.TrimSpace(string(stderr)))
 	}
 	var resp struct {
 		State string `json:"state"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
+	if err := json.Unmarshal(stdout, &resp); err != nil {
 		return "", fmt.Errorf("parse gh pr view state output: %w", err)
 	}
 	if resp.State == "" {
@@ -138,15 +163,12 @@ func (c *GhClient) PRState(ctx context.Context, slug string, number int) (string
 // base_branch, title, body, base repo slug) in one gh call. Defaults to
 // cwd's repo, same as `gh pr view <N>`.
 func (c *GhClient) PRMeta(ctx context.Context, number int) (PRMeta, error) {
-	cmd := exec.CommandContext(ctx, c.bin(),
+	stdout, stderr, err := c.exec(ctx, nil,
 		"pr", "view", strconv.Itoa(number),
 		"--json", "number,headRefOid,baseRefName,title,body,url",
 	)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return PRMeta{}, fmt.Errorf("gh pr view: %w: %s", err, strings.TrimSpace(stderr.String()))
+	if err != nil {
+		return PRMeta{}, fmt.Errorf("gh pr view: %w: %s", err, strings.TrimSpace(string(stderr)))
 	}
 	var raw struct {
 		Number     int    `json:"number"`
@@ -156,7 +178,7 @@ func (c *GhClient) PRMeta(ctx context.Context, number int) (PRMeta, error) {
 		Body       string `json:"body"`
 		URL        string `json:"url"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &raw); err != nil {
+	if err := json.Unmarshal(stdout, &raw); err != nil {
 		return PRMeta{}, fmt.Errorf("parse gh pr view output: %w", err)
 	}
 	if raw.HeadSha == "" {
@@ -197,14 +219,11 @@ func slugFromPRURL(raw string) (string, error) {
 
 // PRDiff returns the unified diff of the PR. Defaults to cwd's repo.
 func (c *GhClient) PRDiff(ctx context.Context, number int) (string, error) {
-	cmd := exec.CommandContext(ctx, c.bin(), "pr", "diff", strconv.Itoa(number))
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("gh pr diff: %w: %s", err, strings.TrimSpace(stderr.String()))
+	stdout, stderr, err := c.exec(ctx, nil, "pr", "diff", strconv.Itoa(number))
+	if err != nil {
+		return "", fmt.Errorf("gh pr diff: %w: %s", err, strings.TrimSpace(string(stderr)))
 	}
-	return stdout.String(), nil
+	return string(stdout), nil
 }
 
 // PostReview submits the review to /repos/{slug}/pulls/{number}/reviews via
@@ -216,31 +235,27 @@ func (c *GhClient) PostReview(ctx context.Context, slug string, number int, p Pa
 	}
 	endpoint := fmt.Sprintf("/repos/%s/pulls/%d/reviews", slug, number)
 
-	cmd := exec.CommandContext(ctx, c.bin(),
+	stdout, stderr, err := c.exec(ctx, body,
 		"api", "-X", "POST", endpoint,
 		"--input", "-",
 	)
-	cmd.Stdin = bytes.NewReader(body)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	if err != nil {
 		// gh writes the short "gh: ... (HTTP N)" line to stderr but puts the
 		// full GitHub response body (where errors[].message lives) on stdout.
-		body := strings.TrimSpace(stdout.String())
-		if body == "" {
-			return 0, fmt.Errorf("gh api POST %s: %w: %s", endpoint, err, strings.TrimSpace(stderr.String()))
+		respBody := strings.TrimSpace(string(stdout))
+		if respBody == "" {
+			return 0, fmt.Errorf("gh api POST %s: %w: %s", endpoint, err, strings.TrimSpace(string(stderr)))
 		}
-		return 0, fmt.Errorf("gh api POST %s: %w: %s: body=%s", endpoint, err, strings.TrimSpace(stderr.String()), body)
+		return 0, fmt.Errorf("gh api POST %s: %w: %s: body=%s", endpoint, err, strings.TrimSpace(string(stderr)), respBody)
 	}
 	var resp struct {
 		ID int64 `json:"id"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
+	if err := json.Unmarshal(stdout, &resp); err != nil {
 		return 0, fmt.Errorf("parse review response: %w", err)
 	}
 	if resp.ID == 0 {
-		return 0, fmt.Errorf("response has no review id; raw: %s", stdout.String())
+		return 0, fmt.Errorf("response has no review id; raw: %s", string(stdout))
 	}
 	return resp.ID, nil
 }
@@ -248,21 +263,18 @@ func (c *GhClient) PostReview(ctx context.Context, slug string, number int, p Pa
 // PRTitle returns the PR's title. Used to annotate background-review jobs
 // so the job list can show what each run was about.
 func (c *GhClient) PRTitle(ctx context.Context, slug string, number int) (string, error) {
-	cmd := exec.CommandContext(ctx, c.bin(),
+	stdout, stderr, err := c.exec(ctx, nil,
 		"pr", "view", strconv.Itoa(number),
 		"--repo", slug,
 		"--json", "title",
 	)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("gh pr view %d (title): %w: %s", number, err, strings.TrimSpace(stderr.String()))
+	if err != nil {
+		return "", fmt.Errorf("gh pr view %d (title): %w: %s", number, err, strings.TrimSpace(string(stderr)))
 	}
 	var resp struct {
 		Title string `json:"title"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &resp); err != nil {
+	if err := json.Unmarshal(stdout, &resp); err != nil {
 		return "", fmt.Errorf("parse gh pr view title output: %w", err)
 	}
 	return resp.Title, nil
