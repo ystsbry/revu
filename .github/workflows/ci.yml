@@ -109,6 +109,11 @@ jobs:
     runs-on: ubuntu-latest
     # dupl / gocyclo の分だけ lint job より長めに取る。
     timeout-minutes: 15
+    # 指摘サマリを PR に sticky comment として post するため、
+    # test job（カバレッジ）と同様にこの job だけ write を持たせる。
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v7
 
@@ -129,7 +134,87 @@ jobs:
         with:
           # lint job と同じバージョンを使う。更新するときは両方揃えること。
           version: v2.12.2
-          args: --config=.golangci.next.yml
+          # text 出力は既定どおり stdout（＝ログと annotation）へ流しつつ、
+          # レポート組み立て用に JSON をファイルへ出す。
+          args: --config=.golangci.next.yml --output.json.path=lint-report.json
+
+      - name: build lint report
+        id: lint
+        run: |
+          # 上の step が lint 実行前に落ちた場合（インストール失敗など）に備える。
+          if [ ! -f lint-report.json ]; then
+            echo "total=unknown" >> "$GITHUB_OUTPUT"
+            {
+              echo "report<<LINTEOF"
+              echo
+              echo "レポートを生成できませんでした。lint-next の job ログを確認してください。"
+              echo "LINTEOF"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          total=$(jq '.Issues // [] | length' lint-report.json)
+          echo "total=$total" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "report<<LINTEOF"
+            echo
+            if [ "$total" -eq 0 ]; then
+              echo "指摘はありません。.golangci.next.yml の linter を .golangci.yml へ移し、"
+              echo "ブロッキングに昇格できる状態です（REVU-50）。"
+            else
+              echo "| linter | 件数 |"
+              echo "| --- | ---: |"
+              jq -r '.Issues | group_by(.FromLinter) | map({l: .[0].FromLinter, n: length})
+                     | sort_by(-.n) | .[] | "| \(.l) | \(.n) |"' lint-report.json
+              echo "| **合計** | **$total** |"
+              echo
+              echo "<details>"
+              echo "<summary>ファイル別（上位 20）</summary>"
+              echo
+              echo "| ファイル | 件数 |"
+              echo "| --- | ---: |"
+              jq -r '.Issues | group_by(.Pos.Filename) | map({f: .[0].Pos.Filename, n: length})
+                     | sort_by(-.n) | .[0:20][] | "| `\(.f)` | \(.n) |"' lint-report.json
+              echo
+              echo "</details>"
+              echo
+              echo "<details>"
+              echo "<summary>指摘一覧</summary>"
+              echo
+              echo '```'
+              jq -r '.Issues | sort_by(.Pos.Filename, .Pos.Line) | .[0:100][]
+                     | "\(.Pos.Filename):\(.Pos.Line): \(.Text) (\(.FromLinter))"' lint-report.json
+              if [ "$total" -gt 100 ]; then
+                echo
+                echo "... 他 $((total - 100)) 件（全件は job ログ、または artifact の lint-report.json を参照）"
+              fi
+              echo '```'
+              echo
+              echo "</details>"
+            fi
+            echo "LINTEOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: upload lint report artifact
+        if: hashFiles('lint-report.json') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: lint-next-report
+          path: lint-report.json
+          retention-days: 14
+
+      - name: post lint comment on PR
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: marocchino/sticky-pull-request-comment@v3
+        with:
+          header: lint-next
+          message: |
+            ## Lint (next): ${{ steps.lint.outputs.total }} issues
+
+            standard セットを超える拡張 linter（`.golangci.next.yml`）の結果。
+            現時点では**非ブロッキング**で、返済は [コード品質向上](https://linear.app/ybaba/project/コード品質向上-f8209fe1fadc) プロジェクトで進行中。
+            ${{ steps.lint.outputs.report }}
 
   format:
     runs-on: ubuntu-latest
