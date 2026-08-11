@@ -100,6 +100,149 @@ jobs:
           # .golangci.yml は `version: "2"` なので v2 系を追う。
           version: v2.12.2
 
+  # 拡張 linter セット (.golangci.next.yml) を「まだ守れていないライン」として動かす job。
+  # 指摘は PR に annotation として出るが、continue-on-error なので CI は赤くならない。
+  #
+  # 返済が終わった linter から .golangci.yml 側（上の lint job = ブロッキング）へ移し、
+  # 最終的にこの job は lint に統合して削除する。
+  lint-next:
+    runs-on: ubuntu-latest
+    # dupl / gocyclo の分だけ lint job より長めに取る。
+    timeout-minutes: 15
+    # 指摘サマリを PR に sticky comment として post するため、
+    # test job（カバレッジ）と同様にこの job だけ write を持たせる。
+    permissions:
+      contents: read
+      pull-requests: write
+      # コメントに貼る job の URL を Actions API から引くため。
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          # golangci-lint-action 側で独自にキャッシュするため、ここでは無効化する。
+          cache: false
+
+      - uses: golangci/golangci-lint-action@v9
+        # job ではなく step に付けるのが重要。
+        # job レベルに付けるとワークフロー全体の conclusion は success になるが、
+        # job 自身の conclusion は failure のままで、PR には赤いチェックとして残る。
+        # step レベルなら job が success になり、指摘は annotation としてだけ出る。
+        # 「常に赤い」状態が続くと本物の失敗を見逃すため、こちらを採る。
+        # ここを外してブロッキングに昇格させるのがこのプロジェクトのゴール。
+        continue-on-error: true
+        with:
+          # lint job と同じバージョンを使う。更新するときは両方揃えること。
+          version: v2.12.2
+          # text 出力は既定どおり stdout（＝ログと annotation）へ流しつつ、
+          # レポート組み立て用に JSON をファイルへ出す。
+          args: --config=.golangci.next.yml --output.json.path=lint-report.json
+
+      - name: build lint report
+        id: lint
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # コメントから直接 job のログへ飛べるようにする。
+          # job の数値 ID は workflow context から取れないため API で引き、
+          # 失敗したら run の URL にフォールバックする。
+          job_url=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs" \
+            --jq '.jobs[] | select(.name == "lint-next") | .html_url' 2>/dev/null | head -1 || true)
+          # API が失敗すると stdout にエラーボディが漏れることがあるため、
+          # 空チェックではなく URL の形そのものを検証する。
+          case "$job_url" in
+            https://*) ;;
+            *) job_url="$RUN_URL" ;;
+          esac
+          echo "job_url=$job_url" >> "$GITHUB_OUTPUT"
+          echo "run_url=$RUN_URL" >> "$GITHUB_OUTPUT"
+
+          # 上の step が lint 実行前に落ちた場合（インストール失敗など）に備える。
+          if [ ! -f lint-report.json ]; then
+            echo "total=unknown" >> "$GITHUB_OUTPUT"
+            {
+              echo "report<<LINTEOF"
+              echo
+              echo "レポートを生成できませんでした。lint-next の job ログを確認してください。"
+              echo "LINTEOF"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          total=$(jq '.Issues // [] | length' lint-report.json)
+          echo "total=$total" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "report<<LINTEOF"
+            echo
+            if [ "$total" -eq 0 ]; then
+              echo "指摘はありません。.golangci.next.yml の linter を .golangci.yml へ移し、"
+              echo "ブロッキングに昇格できる状態です（REVU-50）。"
+            else
+              echo "| linter | 件数 |"
+              echo "| --- | ---: |"
+              jq -r '.Issues | group_by(.FromLinter) | map({l: .[0].FromLinter, n: length})
+                     | sort_by(-.n) | .[] | "| \(.l) | \(.n) |"' lint-report.json
+              echo "| **合計** | **$total** |"
+              echo
+              echo "<details>"
+              echo "<summary>ファイル別（上位 20）</summary>"
+              echo
+              echo "| ファイル | 件数 |"
+              echo "| --- | ---: |"
+              jq -r '.Issues | group_by(.Pos.Filename) | map({f: .[0].Pos.Filename, n: length})
+                     | sort_by(-.n) | .[0:20][] | "| `\(.f)` | \(.n) |"' lint-report.json
+              echo
+              echo "</details>"
+              echo
+              echo "<details>"
+              echo "<summary>指摘一覧</summary>"
+              echo
+              echo '```'
+              jq -r '.Issues | sort_by(.Pos.Filename, .Pos.Line) | .[0:100][]
+                     | "\(.Pos.Filename):\(.Pos.Line): \(.Text) (\(.FromLinter))"' lint-report.json
+              if [ "$total" -gt 100 ]; then
+                echo
+                echo "... 他 $((total - 100)) 件（全件は上記の実行ログ、または artifact の lint-report.json を参照）"
+              fi
+              echo '```'
+              echo
+              echo "</details>"
+            fi
+            echo "LINTEOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: upload lint report artifact
+        if: hashFiles('lint-report.json') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: lint-next-report
+          path: lint-report.json
+          retention-days: 14
+
+      - name: post lint comment on PR
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: marocchino/sticky-pull-request-comment@v3
+        with:
+          header: lint-next
+          message: |
+            ## Lint (next): ${{ steps.lint.outputs.total }} issues
+
+            standard セットを超える拡張 linter（`.golangci.next.yml`）の結果。
+            [実行ログ](${{ steps.lint.outputs.job_url }}) ・ [全件 JSON (artifact)](${{ steps.lint.outputs.run_url }})
+
+            **このチェックは意図的に非ブロッキングです。** 既存コードに未返済の指摘が残っているため、
+            ここを赤くすると全 PR が常時赤くなり、本物の失敗を見逃すことになります。
+            守るべきラインはブロッキングの `lint` job（standard セット・常にゼロ）が担保しています。
+
+            指摘がゼロになったら `.golangci.next.yml` を `.golangci.yml` に統合し、
+            この job も `lint` に統合して削除する予定です。
+            ${{ steps.lint.outputs.report }}
+
   format:
     runs-on: ubuntu-latest
     timeout-minutes: 10
