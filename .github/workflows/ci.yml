@@ -32,14 +32,82 @@ jobs:
           go test -coverprofile=coverage.out -covermode=atomic ./... \
             | tee test-output.txt
 
+      # A package with no test files is silently counted as 0% in the
+      # total and never appears in the per-package section of the comment,
+      # so it needs its own annotation to be noticeable at all.
+      - name: warn on packages without tests
+        run: |
+          # Asked of go list rather than scraped from the test output: with
+          # -coverprofile those packages print "coverage: 0.0%" like any
+          # other, not the "[no test files]" line they show without it.
+          go list -f '{{if and (eq (len .TestGoFiles) 0) (eq (len .XTestGoFiles) 0)}}{{.ImportPath}}{{end}}' ./... \
+            | grep -v '^$' > untested.txt || true
+          while read -r pkg; do
+            [ -n "$pkg" ] || continue
+            echo "::warning::$pkg has no test files — it counts as 0% toward the total"
+          done < untested.txt
+          echo "untested packages: $(wc -l < untested.txt)"
+
+      # Coverage of the PR's base commit, for the delta in the comment.
+      # ci.yml only runs on pull_request, so there is no stored run on main
+      # to read from; the base has to be measured here. Best-effort: a base
+      # that does not build just means the delta is omitted.
+      - name: measure base coverage
+        id: base
+        run: |
+          base='${{ github.event.pull_request.base.sha }}'
+          if ! git fetch --depth=1 origin "$base" 2>/dev/null; then
+            echo "could not fetch base $base; skipping the delta"
+            exit 0
+          fi
+          git worktree add --detach /tmp/base "$base" >/dev/null 2>&1 || exit 0
+          if (cd /tmp/base && go test -coverprofile=/tmp/base-coverage.out -covermode=atomic ./... >/dev/null 2>&1); then
+            total=$(go tool cover -func=/tmp/base-coverage.out | awk '/^total:/{print $NF}')
+            echo "total=$total" >> "$GITHUB_OUTPUT"
+            echo "base coverage: $total"
+          else
+            echo "base tests did not pass; skipping the delta"
+          fi
+
       - name: build coverage report
         id: cov
+        env:
+          BASE_TOTAL: ${{ steps.base.outputs.total }}
         run: |
           total=$(go tool cover -func=coverage.out | grep "^total:" | awk '{print $NF}')
           echo "total=$total" >> "$GITHUB_OUTPUT"
+
+          # "84.7%" -> "84.7" for the arithmetic below.
+          num=${total%\%}
+          delta=""
+          if [ -n "$BASE_TOTAL" ]; then
+            base_num=${BASE_TOTAL%\%}
+            delta=$(awk -v a="$num" -v b="$base_num" 'BEGIN{printf "%+.1f", a-b}')
+            echo "delta=$delta" >> "$GITHUB_OUTPUT"
+            echo "base=$BASE_TOTAL" >> "$GITHUB_OUTPUT"
+          fi
+
+          # One heading line carrying everything that decides pass/fail,
+          # so the reader does not have to open the details to see it.
+          threshold=$(tr -d '[:space:]' < .coverage-threshold)
+          heading="## Coverage: $total"
+          if [ -n "$delta" ]; then
+            heading="$heading (${delta}% vs base $BASE_TOTAL)"
+          fi
+          heading="$heading — threshold ${threshold}%"
+          echo "heading=$heading" >> "$GITHUB_OUTPUT"
+
           {
             echo "report<<COVEOF"
             echo
+            if [ -s untested.txt ]; then
+              echo "**Packages with no test files** (counted as 0% in the total):"
+              echo
+              while read -r pkg; do
+                [ -n "$pkg" ] && echo "- \`$pkg\`"
+              done < untested.txt
+              echo
+            fi
             echo "<details>"
             echo "<summary>Per-package coverage</summary>"
             echo
@@ -78,8 +146,29 @@ jobs:
         with:
           header: coverage
           message: |
-            ## Coverage: ${{ steps.cov.outputs.total }}
+            ${{ steps.cov.outputs.heading }}
             ${{ steps.cov.outputs.report }}
+
+      # The gate runs last so the report is posted even when it fails —
+      # a red job with no numbers to look at would be the worst outcome.
+      #
+      # The bar lives in .coverage-threshold (one place, readable outside
+      # CI) and is ratcheted up as coverage work lands. It is never lowered
+      # to make a red PR green: that is the whole point of the file.
+      - name: coverage threshold gate
+        env:
+          TOTAL: ${{ steps.cov.outputs.total }}
+        run: |
+          threshold=$(tr -d '[:space:]' < .coverage-threshold)
+          total=${TOTAL%\%}
+          echo "coverage ${total}% / threshold ${threshold}%"
+          awk -v got="$total" -v want="$threshold" '
+            BEGIN {
+              if (got + 0 < want + 0) {
+                printf "::error::coverage %.1f%% is below the %.1f%% threshold in .coverage-threshold\n", got, want
+                exit 1
+              }
+            }'
 
   lint:
     runs-on: ubuntu-latest
