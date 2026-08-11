@@ -168,10 +168,16 @@ func SaveGeneratedBy(reviewDir string, patch GeneratedByPatch) error {
 }
 
 // mappingNode returns the document's mapping node, unwrapping a top-level
-// DocumentNode if present.
+// DocumentNode if present. Returns nil when the document's root is not a
+// mapping — both callers report that as "top-level is not a mapping"
+// rather than appending keys into, say, a sequence and writing the result
+// back over the user's file.
 func mappingNode(n *yaml.Node) *yaml.Node {
 	if n.Kind == yaml.DocumentNode && len(n.Content) > 0 {
-		return n.Content[0]
+		n = n.Content[0]
+	}
+	if n.Kind != yaml.MappingNode {
+		return nil
 	}
 	return n
 }
