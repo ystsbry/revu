@@ -287,7 +287,7 @@ $ revu guidelines list
 | `revu jobs log <job-id>` | ジョブのログ（エージェントの進捗リレー）を表示 |
 | `revu validate [dir]` | review.yml と Markdown の整合性チェック |
 | `revu status [dir]` | accept/reject の集計、submit 状況を表示 |
-| `revu tui` | 複数リポジトリのレビューダッシュボードを起動（左サイドバーでリポジトリ選択（プロファイル適用）→ 右ペインに GitHub の open PR カード → PR アクション → レビュー TUI。cwd 非依存、マウス対応） |
+| `revu tui` | 複数リポジトリのレビューダッシュボードを起動（左サイドバーでリポジトリ選択（プロファイル適用）→ 右ペインに GitHub の open PR カード → PR アクション → レビュー TUI。job タブで全バックグラウンドジョブを新しい順に一覧。cwd 非依存、マウス対応） |
 | `revu open [dir]` | TUI を起動（clone は cwd 一致 → 登録リポジトリの順で解決） |
 | `revu open --repo-root <path> <dir>` | repo 検証をスキップして任意のローカル clone を指定 |
 | `revu export [dir] --format json` | 投稿ペイロードを JSON で標準出力（API は呼ばない） |

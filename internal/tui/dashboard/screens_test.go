@@ -59,6 +59,7 @@ func newTestShell() (*Root, *Home, *PRActions) {
 
 	h := NewHome()
 	h.newWatch = func() *jobsWatcher { return nil }
+	h.loadJobs = func() ([]jobs.Job, error) { return nil, nil }
 	h.loadRepos = func() (repoListData, error) {
 		return repoListData{Items: []RepoItem{{Slug: "o/r", Registered: true}}}, nil
 	}

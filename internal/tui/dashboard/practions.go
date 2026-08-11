@@ -100,7 +100,8 @@ func NewPRActions(slug string, item PRItem) *PRActions {
 			model = cfg.Review.ClaudeModel
 		}
 		return jobs.StartReview(jobs.StartReviewOptions{
-			Slug: slug, PR: item.Number, Engine: "claude", Model: model, WorkDir: workDir,
+			Slug: slug, PR: item.Number, Engine: "claude", Model: model,
+			PRTitle: item.Title, WorkDir: workDir,
 		})
 	}
 	m.runExec = runExternal

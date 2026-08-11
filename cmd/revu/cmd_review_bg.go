@@ -24,12 +24,21 @@ func (deps reviewDeps) startBackgroundReview(cmd *cobra.Command, opts reviewOpti
 	if err != nil {
 		return fmt.Errorf("locate revu binary for the worker: %w", err)
 	}
+	// Best-effort: the title only annotates the job list, so a fetch
+	// failure must not block the start.
+	title := ""
+	if deps.prTitle != nil {
+		if t, err := deps.prTitle(cmd.Context(), opts.Slug, opts.PRNumber); err == nil {
+			title = t
+		}
+	}
 	job, err := jobs.StartReview(jobs.StartReviewOptions{
 		Slug:    opts.Slug,
 		PR:      opts.PRNumber,
 		Engine:  string(opts.Engine),
 		Focus:   opts.Focus,
 		Model:   opts.Model,
+		PRTitle: title,
 		WorkDir: workDir,
 		RevuBin: bin,
 		Now:     deps.now,

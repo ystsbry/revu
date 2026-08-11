@@ -22,7 +22,8 @@ selected repository's open PRs as cards on the right, filtered by the
 per-repo search condition. Click or Enter on a card opens the PR's
 action panel, and the review TUI below it. Cards carry
 [reviewed]/[submitted] badges, and background jobs show as
-[running]/[failed]. The action panel can generate reviews in the
+[running]/[failed]. The job tab lists every background job (newest
+first) with its repository, PR, outcome, and job id. The action panel can generate reviews in the
 background (a detached job) or in the foreground, and resume the agent
 session — foreground and resume hand the terminal to the agent until it
 exits, then return here. The existing commands ("revu open",

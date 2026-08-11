@@ -45,6 +45,7 @@ type reviewDeps struct {
 	cwdRoot     func() (string, error)
 	executable  func() (string, error)
 	spawnWorker func(revuBin string, j jobs.Job) (int, error)
+	prTitle     func(ctx context.Context, slug string, number int) (string, error)
 }
 
 func defaultReviewDeps() reviewDeps {
@@ -57,6 +58,7 @@ func defaultReviewDeps() reviewDeps {
 		cwdRoot:     store.CwdRepoRoot,
 		executable:  os.Executable,
 		spawnWorker: jobs.SpawnWorker,
+		prTitle:     github.New().PRTitle,
 	}
 }
 
