@@ -37,7 +37,11 @@ jobs:
       # so it needs its own annotation to be noticeable at all.
       - name: warn on packages without tests
         run: |
-          grep -F '[no test files]' test-output.txt | awk '{print $2}' > untested.txt || true
+          # Asked of go list rather than scraped from the test output: with
+          # -coverprofile those packages print "coverage: 0.0%" like any
+          # other, not the "[no test files]" line they show without it.
+          go list -f '{{if and (eq (len .TestGoFiles) 0) (eq (len .XTestGoFiles) 0)}}{{.ImportPath}}{{end}}' ./... \
+            | grep -v '^$' > untested.txt || true
           while read -r pkg; do
             [ -n "$pkg" ] || continue
             echo "::warning::$pkg has no test files — it counts as 0% toward the total"
