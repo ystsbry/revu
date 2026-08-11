@@ -1,0 +1,58 @@
+# golangci-lint v2 設定（拡張セット・非ブロッキング）
+#
+# .golangci.yml が「すでに守れている」ライン（CI でブロッキング）なのに対し、
+# こちらは「これから守りたい」ライン。CI では continue-on-error の lint-next job で動かす。
+#
+# 運用: 指摘を返済し終えた linter から .golangci.yml 側へ移していき、
+# 最終的にこのファイルと lint-next job は消して 1 つに統合する。
+# Docs: https://golangci-lint.run/usage/configuration/
+
+version: "2"
+
+run:
+  # standard セットより linter が多く、dupl / gocyclo は全ファイル走査するため
+  # .golangci.yml の 5m より長めに取る。
+  timeout: 10m
+
+linters:
+  # standard（errcheck / govet / ineffassign / staticcheck / unused）に上乗せする。
+  default: standard
+
+  enable:
+    - revive # 命名規約・godoc コメント・未使用パラメータ
+    - gocritic # 慣用表現のチェック
+    - gocyclo # 循環的複雑度
+    - dupl # コード重複
+    - errorlint # %w によるエラーラップ漏れ
+    - prealloc # slice の事前確保漏れ
+    # bodyclose / misspell / unconvert / nakedret も検討したが、
+    # 導入時点で指摘ゼロだったため入れていない。必要になった時点で足す。
+
+  settings:
+    # .golangci.yml と同じ理由（CLI/TUI の出力系は戻り値を見てもユーザーに返せる
+    # 復旧手段が無い）。golangci-lint v2 は設定ファイルの継承をサポートしないため、
+    # 意図的に複製している。片方だけ変えないこと。
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintln
+        - fmt.Fprintf
+
+    gocyclo:
+      # 15 は golangci-lint のデフォルト（30）より厳しいが、
+      # このリポジトリで「1 画面に収まらない分岐」の目安として採用する。
+      min-complexity: 15
+
+    dupl:
+      # デフォルトの 150 tokens だと tui/picker の 60 行重複を取りこぼすため下げる。
+      threshold: 120
+
+issues:
+  # デフォルトは max-issues-per-linter: 50 / max-same-issues: 3 で、超過分は
+  # 黙って捨てられる。この job の目的は「今どれだけ負債があるか」を数え続けることなので
+  # 両方 0（無制限）にする。
+  #
+  # 制限したままだと revive が 50 件で頭打ちになり、実行ごとに報告されるファイルが
+  # 入れ替わって「直したのに件数が減らない」ように見える。
+  max-issues-per-linter: 0
+  max-same-issues: 0

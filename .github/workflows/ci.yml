@@ -100,6 +100,33 @@ jobs:
           # .golangci.yml は `version: "2"` なので v2 系を追う。
           version: v2.12.2
 
+  # 拡張 linter セット (.golangci.next.yml) を「まだ守れていないライン」として動かす job。
+  # 指摘は PR に annotation として出るが、continue-on-error なので CI は赤くならない。
+  #
+  # 返済が終わった linter から .golangci.yml 側（上の lint job = ブロッキング）へ移し、
+  # 最終的にこの job は lint に統合して削除する。
+  lint-next:
+    runs-on: ubuntu-latest
+    # dupl / gocyclo の分だけ lint job より長めに取る。
+    timeout-minutes: 15
+    # 既知の指摘が残っている段階なので、失敗しても PR をブロックしない。
+    # ここを外すのがこのプロジェクトのゴール。
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          # golangci-lint-action 側で独自にキャッシュするため、ここでは無効化する。
+          cache: false
+
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          # lint job と同じバージョンを使う。更新するときは両方揃えること。
+          version: v2.12.2
+          args: --config=.golangci.next.yml
+
   format:
     runs-on: ubuntu-latest
     timeout-minutes: 10
